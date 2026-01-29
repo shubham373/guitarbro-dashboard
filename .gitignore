@@ -1,5 +1,7 @@
 # Database
 data/orders.db
+data/fb_ads.db
+data/ad_comments.csv
 
 # Python
 __pycache__/
