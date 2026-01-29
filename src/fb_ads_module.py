@@ -743,8 +743,8 @@ def render_summary_view(start_date: str, end_date: str, campaigns: list, ad_sets
         last5k_list = calculate_last_spend_roas(ad_full_sorted, 5000)
         last5k_roas = last5k_list[-1] if last5k_list and last5k_list[-1] is not None else None
 
-        # Overall Stop Loss = (total purchases * 1000) - total spend
-        overall_stop_loss = (overall_purchases * 1000) - overall_spend
+        # Overall Stop Loss = (total purchases * 1200) - total spend
+        overall_stop_loss = (overall_purchases * 1200) - overall_spend
 
         # Scaling status
         try:
@@ -932,8 +932,8 @@ def render_detail_view(ad_name: str):
     total_conversion = pd.to_numeric(df["Purchases conversion value"], errors="coerce").fillna(0).sum()
     true_roas = total_conversion / total_spend if total_spend > 0 else 0
 
-    # Stop Loss = (Purchases x 1000) - Spend
-    stop_loss = (total_purchases * 1000) - total_spend
+    # Stop Loss = (Purchases x 1200) - Spend
+    stop_loss = (total_purchases * 1200) - total_spend
 
     if stop_loss > 0:
         sl_color = "#10B981"
@@ -1116,7 +1116,7 @@ def render_detail_view(ad_name: str):
             hold_val = safe_float(row.get("Hold Rate"))
             date_val = str(row.get("Reporting starts", ""))
 
-            daily_pnl = (purchases * 1000) - spend
+            daily_pnl = (purchases * 1200) - spend
             cumulative_sl += daily_pnl
 
             ad_score, _ = calculate_ad_score(ctr_val, hook_val, cpm_val)

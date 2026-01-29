@@ -55,7 +55,7 @@ DECAY_VELOCITY_ACCELERATING = 15
 PROFIT_BUFFER_SAFE = 5000
 
 # Profit per purchase (for Stop Loss calculation)
-PROFIT_PER_PURCHASE = 1000
+PROFIT_PER_PURCHASE = 1200
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELPER FUNCTIONS
