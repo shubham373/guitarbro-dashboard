@@ -16,6 +16,7 @@ A comprehensive analytics dashboard for GuitarBro's Shopify store and Facebook a
 shopify-dashboard/
 ├── src/
 │   ├── app.py                    # Main Streamlit app with navigation
+│   ├── config.py                 # Secrets helper (supports .env + Streamlit Cloud)
 │   ├── shared_styles.py          # SHARED CSS - Import in ALL modules
 │   │
 │   │   # FB Comment Bot
@@ -37,6 +38,10 @@ shopify-dashboard/
 │   ├── logistics_parsers.py      # CSV parsers for Shopify & Prozo
 │   └── logistics_engine.py       # Matching engine & metrics calculation
 │
+├── .streamlit/
+│   ├── config.toml               # Streamlit theme configuration
+│   └── secrets.toml.example      # Template for Streamlit Cloud secrets
+│
 ├── data/
 │   ├── orders.db                 # Shopify orders (SQLite)
 │   ├── fb_ads.db                 # FB Ads data (SQLite)
@@ -49,15 +54,61 @@ shopify-dashboard/
 │   ├── USER_JOURNEY_PRD.md       # PRD for user journey module
 │   └── PHASE1_LOGISTICS_OUTLINE.md  # Phase 1 logistics specs
 │
-├── user-journey-tracker/         # Standalone journey tracker (legacy)
-│
 ├── CLAUDE.md                     # This file - project documentation
 ├── UI_GUIDELINES.md              # UI development guidelines
 ├── STYLING_GUIDE.md              # Visual CSS reference guide
 ├── requirements.txt              # Python dependencies
 ├── .env                          # Environment variables (not in git)
+├── .env.example                  # Template for environment variables
 └── .gitignore
 ```
+
+---
+
+## Streamlit Cloud Deployment
+
+### GitHub Repository
+- **URL**: https://github.com/shubham373/guitarbro-dashboard
+- **Branch**: `main`
+- **Main file**: `src/app.py`
+
+### Streamlit Cloud App
+- **URL**: https://guitarbro-dashboard-appzp3wkdhdyoc6kappppzb8v.streamlit.app
+
+### Authentication (Viewer Access Control)
+To restrict access to approved emails only:
+1. Go to Streamlit Cloud → Your App → Settings → Sharing
+2. Change from "Public" to "Private"
+3. Select "Email allowlist"
+4. Add approved email addresses or domains (e.g., `@guitarbro.com`)
+
+### Secrets Configuration
+Secrets are configured in Streamlit Cloud Settings → Secrets (TOML format):
+
+```toml
+FACEBOOK_PAGE_ID = "151712605546634"
+FACEBOOK_PAGE_ACCESS_TOKEN = "your_token_here"
+FACEBOOK_APP_ID = "883305767908950"
+FACEBOOK_APP_SECRET = "your_secret_here"
+FACEBOOK_AD_ACCOUNT_ID = "act_89400171"
+FACEBOOK_USER_ACCESS_TOKEN = "your_token_here"
+FB_COMMENTS_DB_PATH = "data/fb_comments.db"
+ANTHROPIC_API_KEY = "sk-ant-api03-your_key_here"
+```
+
+### Current Issue: Data Persistence
+**Problem**: SQLite data is lost when Streamlit Cloud app reboots (ephemeral filesystem).
+
+**Solution Options**:
+
+| Option | Cost | Best For |
+|--------|------|----------|
+| **Supabase** (Recommended) | FREE (500MB) | Simple persistent storage |
+| **Snowflake** | $25-50/month | Native Streamlit integration |
+| **Google Sheets** | FREE | Very simple data |
+| **PlanetScale** | FREE (5GB) | MySQL preference |
+
+**Next Step**: Migrate from SQLite to Supabase for persistent cloud storage.
 
 ---
 
@@ -114,27 +165,35 @@ def render_your_module():
 **Files:** `fb_comment_bot_module.py`, `comment_classifier.py`, `comment_fetcher.py`, `facebook_api.py`
 
 **Features:**
-- **Fetch from Active Ads**: Fetches comments from active Facebook ads (not organic posts)
-- **48-hour window**: Only fetches comments from the last 48 hours
+- **Fetch from Active Ads**: Fetches comments from ads with spend in last 7 days
+- **Delivery-based filtering**: Uses Insights API with `time_range` to get ads with actual delivery
+- **`filter=stream`**: Gets ALL comments including hidden/filtered ones
+- **Instagram Support**: Fetches IG comments via `effective_instagram_media_id`
+- **Parent Comments Only**: Only counts customer parent comments (not replies, not page's own comments)
+- **Thread Display**: Shows conversation threads under each parent comment
 - **AI Classification**: Uses Claude Haiku to categorize comments
-- **Shadow Mode**: Generate replies without posting (default)
+- **Shadow Mode**: Generate replies without posting (default ON)
 - **Reply Management**: Approve/Edit/Skip replies before posting
-- **Commenter History**: Track repeat commenters and patterns
+
+**Comment Filtering Logic:**
+1. Skip comments that have a `parent` field (they are replies)
+2. Skip comments where `from.id` equals GuitarBro page ID
+3. Fetch thread replies separately and display under parent
+4. Instagram: Skip comments from GuitarBro's IG username
 
 **How Ad Comment Fetching Works:**
-1. Uses Facebook Ads API with User Access Token + `ads_read` permission
-2. Fetches ads with these effective statuses: `ACTIVE`, `ADSET_PAUSED`, `CAMPAIGN_PAUSED`
-   - This catches all ads where the AD itself is active, even if parent adset/campaign is paused
-3. For each ad, gets `effective_object_story_id` (the post ID linked to the ad creative)
-4. Fetches comments on each post using Page Access Token
-5. Filters to only comments from last 48 hours
-6. Stores ad_id and ad_name with each comment for tracking
+1. Uses Facebook Insights API with `time_range` (last 7 days INCLUDING today)
+2. Filters to ads with `spend > 0` (actual delivery)
+3. Gets `effective_object_story_id` and `effective_instagram_media_id` from creative
+4. Fetches FB comments with `filter=stream` parameter
+5. Fetches IG comments with `replies` field for threading
+6. Classifies with Claude Haiku
+7. Stores with `platform`, `parent_comment_id`, `thread_depth` fields
 
-**Important: Facebook API Limitations:**
-- Comments are on POSTS, not directly on ADS
-- Each ad's creative links to a post via `effective_object_story_id`
-- New comments can take minutes to hours to appear in the API (caching delay)
-- Some comments may be hidden by Facebook's content filters
+**Key API Parameters:**
+- `time_range`: `{"since": "YYYY-MM-DD", "until": "YYYY-MM-DD"}` - includes today
+- `filter=stream`: Gets ALL comments including hidden ones
+- `effective_instagram_media_id`: For accessing IG comments on ad dark posts
 
 **Ad Account:** `act_89400171` (Shubham Bansal)
 **Page ID:** `151712605546634` (GuitarBro)
@@ -148,25 +207,32 @@ def render_your_module():
 - `complaint` - Service issues, order problems
 - `other` - Everything else
 
-**Workflow:**
-1. Click "Fetch Now" → Gets active ads from Ads API
-2. For each ad → Gets post ID from creative → Fetches comments (last 48h)
-3. Claude classifies each comment (category, sentiment, confidence)
-4. Claude generates suggested reply
-5. Comments stored in database with `reply_status = pending`, `ad_id`, `ad_name`
-6. Review in dashboard → Approve/Edit/Skip
-7. Approved replies posted to Facebook (or shadow mode)
+**Category Colors (UI):**
+| Category | Background Color |
+|----------|-----------------|
+| price_objection | `#FEF3C7` (Yellow) |
+| doubt | `#FED7AA` (Orange) |
+| product_question | `#DBEAFE` (Blue) |
+| positive | `#D1FAE5` (Green) |
+| negative | `#FEE2E2` (Red) |
+| complaint | `#FECACA` (Light Red) |
+| other | `#E5E7EB` (Gray) |
 
-**UI Tabs:**
-- Overview: Connection status, fetch button, recent stats
-- Comments: Browse/filter/action comments
-- Analytics: Category breakdown, sentiment trends
-- Config: Shadow mode toggle, notification settings
+**UI Features:**
+- Commenter name with comment count badge
+- Clickable Facebook/Instagram links on each comment
+- Thread replies displayed indented under parent comment
+- Platform icon (📘 Facebook, 📷 Instagram)
+
+**Shadow Mode:**
+- **ON (default)**: Replies are generated but NOT posted to Facebook
+- **OFF**: Clicking "Approve" actually posts the reply to Facebook
+- Toggle in: FB Comment Bot → ⚙️ Settings → Shadow Mode
 
 **Known Issues:**
 - Facebook API can have delay showing new comments (minutes to hours)
 - Comments with profanity may be hidden by Facebook
-- Dynamic creative ads show one `effective_object_story_id` even with multiple creatives
+- Different pages require separate tokens (e.g., page 112629158166593 shows permission errors)
 
 ### 2. FB Ads Module
 
@@ -228,7 +294,8 @@ def render_your_module():
 ## Tech Stack
 
 - **Frontend**: Streamlit
-- **Database**: SQLite (multiple .db files)
+- **Database**: SQLite (local), Supabase (cloud - planned)
+- **Hosting**: Streamlit Cloud
 - **APIs**:
   - Facebook Graph API v21.0
   - Claude API (Anthropic)
@@ -238,30 +305,30 @@ def render_your_module():
 ## Requirements
 
 ```
-streamlit
-pandas
-plotly
-openpyxl
-requests
-python-dotenv
-anthropic
+streamlit>=1.28.0
+pandas>=2.0.0
+plotly>=5.18.0
+openpyxl>=3.1.2
+requests>=2.31.0
+python-dotenv>=1.0.0
+anthropic>=0.18.0
 ```
 
 ---
 
 ## Environment Variables
 
-Required in `.env`:
+Required in `.env` (local) or Streamlit Cloud Secrets:
 
 ```bash
 # Facebook Graph API (Page Access)
-FACEBOOK_PAGE_ID=your_page_id
+FACEBOOK_PAGE_ID=151712605546634
 FACEBOOK_PAGE_ACCESS_TOKEN=your_never_expiring_page_token
-FACEBOOK_APP_ID=your_app_id
+FACEBOOK_APP_ID=883305767908950
 FACEBOOK_APP_SECRET=your_app_secret
 
 # Facebook Ads API (for fetching comments from active ads)
-FACEBOOK_AD_ACCOUNT_ID=act_XXXXXXXXX
+FACEBOOK_AD_ACCOUNT_ID=act_89400171
 FACEBOOK_USER_ACCESS_TOKEN=your_user_token_with_ads_read
 
 # Database
@@ -300,7 +367,7 @@ ANTHROPIC_API_KEY=sk-ant-api03-...
 
 ## Running the App
 
-**IMPORTANT: Always use port 8503. Do not create new hosts on other ports.**
+### Local Development
 
 ```bash
 cd shopify-dashboard
@@ -311,17 +378,17 @@ source venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Run Streamlit (ALWAYS use port 8503)
+# Run Streamlit (use port 8503 for local)
 streamlit run src/app.py --server.port 8503
 ```
 
 The app will be available at `http://localhost:8503`
 
-### Port Rules
-- **8503** - ONLY port to use for this dashboard
-- Never start new Streamlit instances on 8501, 8502, or other ports
-- If 8503 is already running, refresh the browser instead of starting a new instance
-- To restart: Kill existing process first, then start on 8503
+### Streamlit Cloud
+
+1. Push to GitHub: `git push origin main`
+2. App auto-deploys at: https://guitarbro-dashboard-appzp3wkdhdyoc6kappppzb8v.streamlit.app
+3. Configure secrets in Streamlit Cloud Settings → Secrets
 
 ---
 
@@ -341,84 +408,27 @@ The app will be available at `http://localhost:8503`
 
 **Key fields in `fb_comments`:**
 - `fb_comment_id` - Facebook comment ID
+- `parent_comment_id` - Parent comment ID (for threading)
+- `thread_depth` - 0 for parent, 1+ for replies
+- `platform` - 'facebook' or 'instagram'
 - `comment_text` - Original comment text
 - `category` - AI classification result
 - `sentiment` - positive/negative/neutral
 - `confidence` - Classification confidence (0-1)
 - `reply_text` - Suggested/approved reply
 - `reply_status` - pending/approved/sent/skipped
-- `claude_reasoning` - AI reasoning for classification
+- `commenter_name` - Name of the commenter
+- `commenter_fb_id` - Facebook/Instagram ID of commenter
+- `ad_name` - Name of the ad this comment is on
 
-### fb_ads.db (Ads Analytics)
+### Other Databases
 
-| Table | Purpose |
-|-------|---------|
-| `fb_ads_data` | Daily ad performance metrics |
-
-### orders.db (Shopify)
-
-| Table | Purpose |
-|-------|---------|
-| `orders` | Shopify order data (JSON storage) |
-
-### journey.db (User Journey)
-
-| Table | Purpose |
-|-------|---------|
-| `raw_shopify_orders` | Imported orders (normalized phone/email) |
-| `raw_zoom_attendance` | Raw Zoom participant records |
-| `zoom_participants_deduped` | Deduplicated participants per meeting |
-| `unified_users` | Merged customer profiles |
-| `match_audit_log` | Matching decision audit trail |
-
-### logistics.db (Logistics Reconciliation)
-
-| Table | Purpose |
-|-------|---------|
-| `raw_shopify_orders` | Shopify orders (normalized) |
-| `raw_prozo_orders` | Prozo MIS data |
-| `unified_orders` | Matched orders with delivery status |
-| `order_line_items` | Individual line items |
-| `payment_method_mapping` | Payment classification lookup |
-| `delivery_status_mapping` | Status normalization lookup |
-| `import_log` | Import audit trail |
-
----
-
-## Adding New Modules
-
-1. Create `src/new_module.py` following existing module patterns
-2. Add database init function if needed
-3. Create main render function: `render_new_module()`
-4. Import shared_styles:
-   ```python
-   from shared_styles import inject_custom_css
-
-   def render_new_module():
-       inject_custom_css()  # REQUIRED - call first
-       st.title("New Module")
-       # ... rest of code
-   ```
-5. Import in `app.py`
-6. Add to `nav_items` list in `render_sidebar()`
-7. Add to `page_map` dictionary in `main()`
-
----
-
-## Cost Estimates
-
-### Claude API (Comment Classification)
-
-Using Claude Haiku model:
-- ~$0.25/million input tokens
-- ~$1.25/million output tokens
-- **Per comment**: ~₹0.02 INR
-- **100 comments/day**: ~₹60/month
-
-### Facebook API
-
-- **Free** for page management
-- Only requires Page Access Token with appropriate permissions
+| Database | Purpose |
+|----------|---------|
+| `fb_ads.db` | Daily ad performance metrics |
+| `orders.db` | Shopify order data |
+| `journey.db` | User journey tracking |
+| `logistics.db` | Logistics reconciliation |
 
 ---
 
@@ -427,9 +437,11 @@ Using Claude Haiku model:
 | Action | Location |
 |--------|----------|
 | Fetch FB comments | FB Comment Bot → Overview → Fetch Now |
-| Test FB connection | FB Comment Bot → Overview → Test Connection |
+| Test FB connection | FB Comment Bot → Overview → Test FB |
+| Test Instagram connection | FB Comment Bot → Overview → Test IG |
 | Test Claude API | FB Comment Bot → Overview → Test Claude |
-| Toggle shadow mode | FB Comment Bot → Config → Shadow Mode |
+| Toggle shadow mode | FB Comment Bot → ⚙️ Settings → Shadow Mode |
+| View comment threads | FB Comment Bot → 💬 Comments |
 | Upload Shopify CSV | Logistics → Dashboard → Upload |
 | Upload Prozo CSV | Logistics → Dashboard → Upload |
 | View ad recommendations | FB Ads → Recommendations |
@@ -444,6 +456,11 @@ Using Claude Haiku model:
 - Verify token hasn't expired (use never-expiring token)
 - Check `FACEBOOK_PAGE_ID` is correct
 
+### "Permission denied" errors for some ads
+- Some ads are on different Facebook pages (e.g., page ID `112629158166593`)
+- You need separate page tokens for each page
+- These ads are skipped but IG comments may still work
+
 ### "Classifier not ready"
 - Check `.env` has valid `ANTHROPIC_API_KEY`
 - Verify API key has credits available
@@ -454,15 +471,14 @@ Using Claude Haiku model:
 - Check import: `from shared_styles import inject_custom_css`
 - Clear Streamlit cache: `st.cache_data.clear()`
 
-### Database errors
-- Check `data/` directory exists
-- Verify write permissions on db files
-- Check `FB_COMMENTS_DB_PATH` in `.env`
+### "No comments found" but comments exist
+- Facebook API can have **delay** (minutes to hours)
+- Comments with profanity may be **hidden by Facebook**
+- Use `filter=stream` parameter (already implemented)
 
-### "No comments found" but comments exist on Facebook
-- Facebook API can have **delay** (minutes to hours) before new comments appear
-- Comments with profanity (like "BC") may be **hidden by Facebook's content filter**
-- Try refreshing/fetching again after some time
+### Data lost after Streamlit Cloud reboot
+- SQLite uses ephemeral storage on Streamlit Cloud
+- **Solution**: Migrate to Supabase or Snowflake (see Deployment section)
 
 ---
 
@@ -478,21 +494,11 @@ Two tokens are needed in `.env`:
 1. **FACEBOOK_PAGE_ACCESS_TOKEN** - Page token for reading/posting comments
 2. **FACEBOOK_USER_ACCESS_TOKEN** - User token with `ads_read` permission for Ads API
 
-### Current Ad Fetching Logic
-The system fetches ads with these effective statuses:
-- `ACTIVE` - Currently running ads
-- `ADSET_PAUSED` - Ad is active but ad set is paused
-- `CAMPAIGN_PAUSED` - Ad is active but campaign is paused
-
-This ensures we catch comments on ALL ad posts where the ad itself is active.
-
-### Key Post IDs and Their Ads (as of Feb 2026)
-| Post ID | Ad ID | Ad Name |
-|---------|-------|---------|
-| 1070927281717969 | 6928554023939 | Ad 1084 (RL) - Pichle 20 saalo |
-| 1052305276913503 | 6928553350139 | Ad 1083 (RL) - Tech Shuffle |
-| 1336214625189232 | 6915744574939 | Flexiple Ad 700 (has recent comments) |
-| 1049374640539900 | 6928551298539 | Ad 1080 (RL) - Ankit Joshi |
+### Comment Counting Logic
+- **Only parent comments count** as "comments"
+- Replies (thread_depth > 0) are displayed but not counted separately
+- Page's own replies are filtered out
+- This matches Business Manager's comment count
 
 ### Facebook API Structure
 ```
@@ -500,27 +506,36 @@ Ad Account
  └── Campaign (status)
       └── Ad Set (status)
            └── Ad (status) → effective_status considers all parents
-                └── Creative → effective_object_story_id → Post
-                     └── Comments (what we fetch)
+                └── Creative
+                     ├── effective_object_story_id → FB Post → Comments
+                     └── effective_instagram_media_id → IG Media → Comments
 ```
 
-### Port Configuration
-- **ALWAYS use port 8503** for Streamlit
-- Never start new instances on 8501, 8502, or other ports
-- URL: `http://localhost:8503`
+### Key Fixes Implemented (Feb 2026)
+1. **`date_preset=last_7d` excludes today** → Fixed with `time_range` parameter
+2. **Missing comments** → Added `filter=stream` to get hidden comments
+3. **Instagram comments** → Use `effective_instagram_media_id` from ad creative
+4. **Page's own replies counted** → Filter by `commenter_id != page_id`
+5. **Replies counted as comments** → Only count `thread_depth=0` or no parent
 
-### Comment Fetching Workflow
-1. `get_active_ad_posts()` → Fetches ads from Ads API
-2. For each ad → Extract `effective_object_story_id` from creative
-3. `get_post_comments()` → Fetch comments from each post
-4. Filter to last 48 hours only
-5. Skip duplicates (already in database)
-6. Classify with Claude Haiku
-7. Store in `fb_comments.db`
+---
 
-### Known Facebook API Limitations
-1. **New comments delay**: Can take minutes to hours to appear in API
-2. **Profanity filter**: Comments like "BC" may be hidden
-3. **Privacy settings**: Some commenter names show as "Unknown"
-4. **Rate limits**: ~200 calls/hour for standard apps
-5. **Dynamic creative**: Multiple creatives share one `effective_object_story_id`
+## Next Steps (TODO)
+
+### 1. Cloud Storage Migration (Priority: HIGH)
+Migrate from SQLite to Supabase for persistent data:
+- [ ] Create Supabase project (free tier)
+- [ ] Create tables matching current SQLite schema
+- [ ] Update database functions to use Supabase client
+- [ ] Add `SUPABASE_URL` and `SUPABASE_KEY` to secrets
+- [ ] Test data persistence across app reboots
+
+### 2. Authentication
+- [x] Enable Streamlit Cloud viewer authentication
+- [ ] Add email allowlist in Streamlit Cloud settings
+
+### 3. Future Enhancements
+- [ ] Auto-refresh comments every X minutes
+- [ ] Email notifications for new comments
+- [ ] Bulk approve/skip actions
+- [ ] Export comments to CSV
