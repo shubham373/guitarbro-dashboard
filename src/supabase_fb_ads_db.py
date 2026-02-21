@@ -82,6 +82,12 @@ def check_fb_ads_supabase_connection() -> Dict[str, Any]:
 
 def _convert_row_to_supabase(row: Dict[str, Any]) -> Dict[str, Any]:
     """Convert a row with original column names to Supabase column names."""
+    # Columns that should be integers in the database
+    INTEGER_COLUMNS = {
+        'purchases', 'impressions', 'reach', 'link_clicks',
+        'landing_page_views', 'checkouts_initiated', 'adds_to_cart'
+    }
+
     result = {}
     for orig_name, supabase_name in COLUMN_MAP_TO_SUPABASE.items():
         if orig_name in row:
@@ -89,6 +95,12 @@ def _convert_row_to_supabase(row: Dict[str, Any]) -> Dict[str, Any]:
             # Convert NaN to None
             if pd.isna(value):
                 value = None
+            # Convert float to int for integer columns (e.g., 38.0 -> 38)
+            elif supabase_name in INTEGER_COLUMNS and value is not None:
+                try:
+                    value = int(float(value))
+                except (ValueError, TypeError):
+                    value = None
             result[supabase_name] = value
     return result
 

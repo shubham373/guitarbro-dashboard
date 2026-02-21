@@ -29,6 +29,7 @@ try:
     SUPABASE_AVAILABLE = True
 except ImportError:
     SUPABASE_AVAILABLE = False
+    Client = None  # Define Client as None for type hints when supabase not available
     logger.warning("supabase package not installed. Run: pip install supabase")
 
 # Supabase client singleton
