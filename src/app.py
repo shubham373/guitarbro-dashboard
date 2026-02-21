@@ -5,15 +5,20 @@ import os
 import sys
 import re
 from datetime import datetime
+from pathlib import Path
 
 # Add src directory to path for Streamlit Cloud compatibility
-src_path = os.path.dirname(os.path.abspath(__file__))
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
+try:
+    src_path = Path(__file__).parent.resolve()
+except NameError:
+    src_path = Path.cwd()
+
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
 
 # Ensure data directory exists (for Streamlit Cloud)
-data_dir = os.path.join(os.path.dirname(src_path), 'data')
-os.makedirs(data_dir, exist_ok=True)
+data_dir = src_path.parent / 'data'
+data_dir.mkdir(exist_ok=True)
 
 from fb_ads_module import render_fb_ads_module
 from fb_comment_bot_module import render_fb_comment_bot_module
