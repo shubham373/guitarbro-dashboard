@@ -3,15 +3,65 @@ Logistics Reconciliation - Database Module
 
 Handles database setup, connections, and data operations for
 Shopify + Prozo logistics reconciliation.
+
+Database Backend:
+- Primary: Supabase (cloud, persistent)
+- Fallback: SQLite (local, ephemeral on Streamlit Cloud)
 """
 
 import sqlite3
 import os
+import logging
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Database path
 DB_PATH = "data/logistics.db"
+
+# =============================================================================
+# DATABASE BACKEND SELECTION
+# =============================================================================
+
+USE_SUPABASE = False
+
+try:
+    from supabase_logistics_db import (
+        check_logistics_supabase_connection,
+        insert_shopify_orders as supabase_insert_shopify_orders,
+        get_shopify_orders as supabase_get_shopify_orders,
+        clear_shopify_orders as supabase_clear_shopify_orders,
+        insert_line_items as supabase_insert_line_items,
+        get_line_items as supabase_get_line_items,
+        clear_line_items as supabase_clear_line_items,
+        insert_prozo_orders as supabase_insert_prozo_orders,
+        get_prozo_orders as supabase_get_prozo_orders,
+        clear_prozo_orders as supabase_clear_prozo_orders,
+        upsert_unified_orders as supabase_upsert_unified_orders,
+        get_unified_orders as supabase_get_unified_orders,
+        get_unified_order_by_id as supabase_get_unified_order_by_id,
+        clear_unified_orders as supabase_clear_unified_orders,
+        get_delivery_status_mapping as supabase_get_delivery_status_mapping,
+        get_payment_method_mapping as supabase_get_payment_method_mapping,
+        log_import as supabase_log_import,
+        get_last_import_info as supabase_get_last_import_info,
+        get_table_counts as supabase_get_table_counts,
+        get_logistics_stats as supabase_get_logistics_stats,
+        clear_all_data as supabase_clear_all_data,
+    )
+
+    # Check if Supabase is connected
+    conn_status = check_logistics_supabase_connection()
+    if conn_status.get('connected'):
+        USE_SUPABASE = True
+        logger.info("Logistics: Using Supabase database backend")
+    else:
+        logger.warning(f"Logistics: Supabase not connected: {conn_status.get('error')}. Falling back to SQLite.")
+except ImportError as e:
+    logger.warning(f"Logistics: Supabase module not available: {e}. Using SQLite.")
 
 
 def get_db_connection() -> sqlite3.Connection:
@@ -334,6 +384,10 @@ def _populate_lookup_tables(conn: sqlite3.Connection):
 
 def get_delivery_status_mapping() -> Dict[str, Dict]:
     """Get delivery status mapping as dictionary."""
+    if USE_SUPABASE:
+        return supabase_get_delivery_status_mapping()
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM delivery_status_mapping WHERE source_system = 'prozo'")
@@ -354,6 +408,10 @@ def get_delivery_status_mapping() -> Dict[str, Dict]:
 
 def clear_all_data():
     """Clear all data from tables (for fresh import)."""
+    if USE_SUPABASE:
+        return supabase_clear_all_data()
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -374,6 +432,10 @@ def clear_all_data():
 
 def get_table_counts() -> Dict[str, int]:
     """Get row counts for all tables."""
+    if USE_SUPABASE:
+        return supabase_get_table_counts()
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -395,6 +457,10 @@ def get_table_counts() -> Dict[str, int]:
 
 def get_last_import_info(source: str) -> Optional[Dict]:
     """Get info about last import for a source."""
+    if USE_SUPABASE:
+        return supabase_get_last_import_info(source)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""

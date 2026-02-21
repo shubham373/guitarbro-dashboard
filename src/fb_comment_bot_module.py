@@ -8,6 +8,10 @@ This module provides automated Facebook comment management with:
 - Commenter history tracking
 - Dashboard for review and manual intervention
 
+Database Backend:
+- Primary: Supabase (cloud, persistent)
+- Fallback: SQLite (local, ephemeral on Streamlit Cloud)
+
 Database Tables:
 - fb_comments: All fetched comments with classification
 - fb_comment_tags: Multi-tag support for comments
@@ -33,6 +37,48 @@ from shared_styles import inject_custom_css
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# DATABASE BACKEND SELECTION
+# =============================================================================
+
+# Try to use Supabase first, fall back to SQLite
+USE_SUPABASE = False
+
+try:
+    from supabase_db import (
+        check_supabase_connection,
+        insert_comment as supabase_insert_comment,
+        get_comments as supabase_get_comments,
+        get_parent_comments as supabase_get_parent_comments,
+        get_thread_replies as supabase_get_thread_replies,
+        update_comment as supabase_update_comment,
+        get_comment_by_id as supabase_get_comment_by_id,
+        get_commenter_comment_count as supabase_get_commenter_comment_count,
+        get_config as supabase_get_config,
+        set_config as supabase_set_config,
+        get_all_config as supabase_get_all_config,
+        upsert_commenter_history as supabase_upsert_commenter_history,
+        get_commenter_history as supabase_get_commenter_history,
+        get_all_commenter_histories as supabase_get_all_commenter_histories,
+        log_event as supabase_log_event,
+        get_recent_logs as supabase_get_recent_logs,
+        upsert_tracked_post as supabase_upsert_tracked_post,
+        update_tracked_post as supabase_update_tracked_post,
+        get_active_tracked_posts as supabase_get_active_tracked_posts,
+        get_stats as supabase_get_stats,
+        get_unique_ad_names as supabase_get_unique_ad_names,
+    )
+
+    # Check if Supabase is actually connected
+    conn_status = check_supabase_connection()
+    if conn_status.get('connected'):
+        USE_SUPABASE = True
+        logger.info("Using Supabase database backend")
+    else:
+        logger.warning(f"Supabase not connected: {conn_status.get('error')}. Falling back to SQLite.")
+except ImportError as e:
+    logger.warning(f"Supabase module not available: {e}. Using SQLite.")
 
 # Import fetcher functions (lazy import to avoid circular deps)
 def _get_fetcher_functions():
@@ -106,7 +152,13 @@ def init_comment_bot_db():
     """
     Initialize all database tables for the FB Comment Bot.
     Creates 7 tables with proper indexes and default config values.
+    Skipped when using Supabase (tables already exist in cloud).
     """
+    if USE_SUPABASE:
+        logger.info("Using Supabase - skipping SQLite initialization")
+        return
+
+    # SQLite initialization
     os.makedirs("data", exist_ok=True)
     conn = sqlite3.connect(FB_COMMENTS_DB_PATH)
     cursor = conn.cursor()
@@ -294,8 +346,12 @@ def insert_comment(comment_dict: Dict[str, Any]) -> int:
         comment_dict: Dictionary with comment fields
 
     Returns:
-        The inserted row id
+        The inserted row id (or True for Supabase)
     """
+    if USE_SUPABASE:
+        return supabase_insert_comment(comment_dict)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -344,6 +400,10 @@ def get_comments(filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any
     Returns:
         List of comment dictionaries
     """
+    if USE_SUPABASE:
+        return supabase_get_comments(filters)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -406,6 +466,10 @@ def update_comment(fb_comment_id: str, updates: Dict[str, Any]) -> bool:
     if not updates:
         return False
 
+    if USE_SUPABASE:
+        return supabase_update_comment(fb_comment_id, updates)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -427,6 +491,10 @@ def update_comment(fb_comment_id: str, updates: Dict[str, Any]) -> bool:
 
 def get_comment_by_id(fb_comment_id: str) -> Optional[Dict[str, Any]]:
     """Get a single comment by its Facebook ID."""
+    if USE_SUPABASE:
+        return supabase_get_comment_by_id(fb_comment_id)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -441,6 +509,11 @@ def get_commenter_comment_count(commenter_fb_id: str) -> int:
     """Get total number of comments by a commenter."""
     if not commenter_fb_id:
         return 0
+
+    if USE_SUPABASE:
+        return supabase_get_commenter_comment_count(commenter_fb_id)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM fb_comments WHERE commenter_fb_id = ?", (commenter_fb_id,))
@@ -451,6 +524,10 @@ def get_commenter_comment_count(commenter_fb_id: str) -> int:
 
 def get_thread_replies(parent_comment_id: str) -> List[Dict[str, Any]]:
     """Get all replies to a parent comment."""
+    if USE_SUPABASE:
+        return supabase_get_thread_replies(parent_comment_id)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -473,6 +550,10 @@ def get_parent_comments(filters: Optional[Dict[str, Any]] = None) -> List[Dict[s
     Returns:
         List of parent comment dictionaries
     """
+    if USE_SUPABASE:
+        return supabase_get_parent_comments(filters)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -614,6 +695,10 @@ def upsert_commenter_history(
     Returns:
         True if successful
     """
+    if USE_SUPABASE:
+        return supabase_upsert_commenter_history(commenter_fb_id, commenter_name, category, sentiment, ad_name)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -749,6 +834,10 @@ def upsert_commenter_history(
 
 def get_commenter_history(commenter_fb_id: str) -> Optional[Dict[str, Any]]:
     """Get full history for a commenter."""
+    if USE_SUPABASE:
+        return supabase_get_commenter_history(commenter_fb_id)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -770,6 +859,10 @@ def get_commenter_history(commenter_fb_id: str) -> Optional[Dict[str, Any]]:
 
 def get_all_commenter_histories(limit: int = 100) -> List[Dict[str, Any]]:
     """Get all commenter histories ordered by total comments."""
+    if USE_SUPABASE:
+        return supabase_get_all_commenter_histories(limit)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -879,6 +972,10 @@ def update_action_status(
 
 def get_config(key: str) -> Optional[str]:
     """Get a configuration value."""
+    if USE_SUPABASE:
+        return supabase_get_config(key)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -914,6 +1011,10 @@ def get_config_typed(key: str, default: Any = None) -> Any:
 
 def set_config(key: str, value: Any) -> bool:
     """Set a configuration value."""
+    if USE_SUPABASE:
+        return supabase_set_config(key, value)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -936,6 +1037,10 @@ def set_config(key: str, value: Any) -> bool:
 
 def get_all_config() -> Dict[str, Any]:
     """Get all configuration as a dictionary."""
+    if USE_SUPABASE:
+        return supabase_get_all_config()
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -970,6 +1075,10 @@ def upsert_tracked_post(post_dict: Dict[str, Any]) -> bool:
     Returns:
         True if successful
     """
+    if USE_SUPABASE:
+        return supabase_upsert_tracked_post(post_dict)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -1006,6 +1115,10 @@ def upsert_tracked_post(post_dict: Dict[str, Any]) -> bool:
 
 def get_active_tracked_posts() -> List[Dict[str, Any]]:
     """Get all active posts being tracked."""
+    if USE_SUPABASE:
+        return supabase_get_active_tracked_posts()
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -1026,6 +1139,10 @@ def update_tracked_post(fb_post_id: str, updates: Dict[str, Any]) -> bool:
     if not updates:
         return False
 
+    if USE_SUPABASE:
+        return supabase_update_tracked_post(fb_post_id, updates)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -1073,6 +1190,10 @@ def log_event(
     Returns:
         Log entry ID
     """
+    if USE_SUPABASE:
+        return supabase_log_event(event_type, detail, fb_comment_id, fb_post_id, error, tokens, cost)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -1092,6 +1213,10 @@ def log_event(
 
 def get_recent_logs(limit: int = 100, event_type: Optional[str] = None) -> List[Dict[str, Any]]:
     """Get recent log entries."""
+    if USE_SUPABASE:
+        return supabase_get_recent_logs(limit, event_type)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -1133,6 +1258,10 @@ def get_stats(
     Returns:
         Dictionary with stats including totals, breakdowns, etc.
     """
+    if USE_SUPABASE:
+        return supabase_get_stats(date_from, date_to)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -1222,6 +1351,10 @@ def get_stats(
 
 def get_unique_ad_names() -> List[str]:
     """Get list of unique ad names from comments."""
+    if USE_SUPABASE:
+        return supabase_get_unique_ad_names()
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -1293,6 +1426,22 @@ def get_sentiment_color(sentiment: str) -> str:
 
 def render_overview_tab():
     """Render the overview/stats tab."""
+
+    # Database backend indicator
+    if USE_SUPABASE:
+        st.markdown("""
+        <div style="background-color: #D1FAE5; padding: 8px 16px; border-radius: 8px; margin-bottom: 16px; border-left: 4px solid #22C55E;">
+            <span style="color: #065F46; font-weight: 600;">☁️ Database: Supabase (Cloud)</span>
+            <span style="color: #065F46;"> - Data persists across reboots</span>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style="background-color: #FEF3C7; padding: 8px 16px; border-radius: 8px; margin-bottom: 16px; border-left: 4px solid #F59E0B;">
+            <span style="color: #92400E; font-weight: 600;">💾 Database: SQLite (Local)</span>
+            <span style="color: #92400E;"> - Data may be lost on Streamlit Cloud reboot</span>
+        </div>
+        """, unsafe_allow_html=True)
 
     # Connection Status & Fetch Section
     render_section_header("Connection & Fetch")

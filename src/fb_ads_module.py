@@ -1,6 +1,10 @@
 """
 Facebook Ads Analytics Module
 Comprehensive analytics for Facebook/Meta advertising campaigns.
+
+Database Backend:
+- Primary: Supabase (cloud, persistent)
+- Fallback: SQLite (local, ephemeral on Streamlit Cloud)
 """
 
 import streamlit as st
@@ -9,14 +13,48 @@ import pandas as pd
 import sqlite3
 import os
 import csv
+import logging
 from datetime import datetime, timedelta
 from typing import Tuple, Optional, List, Dict
 from ad_scaling_logic import get_ad_status
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # DATABASE CONFIGURATION
 # =============================================================================
 FB_ADS_DB_PATH = "data/fb_ads.db"
+
+# =============================================================================
+# DATABASE BACKEND SELECTION
+# =============================================================================
+
+USE_SUPABASE = False
+
+try:
+    from supabase_fb_ads_db import (
+        check_fb_ads_supabase_connection,
+        upload_fb_ads_data as supabase_upload_fb_ads_data,
+        load_fb_ads_data as supabase_load_fb_ads_data,
+        get_unique_campaigns as supabase_get_unique_campaigns,
+        get_unique_ad_sets as supabase_get_unique_ad_sets,
+        get_ad_history as supabase_get_ad_history,
+        get_date_range as supabase_get_date_range,
+        get_fb_ads_stats as supabase_get_fb_ads_stats,
+        clear_fb_ads_data as supabase_clear_fb_ads_data,
+    )
+
+    # Check if Supabase is connected
+    conn_status = check_fb_ads_supabase_connection()
+    if conn_status.get('connected'):
+        USE_SUPABASE = True
+        logger.info("FB Ads: Using Supabase database backend")
+    else:
+        logger.warning(f"FB Ads: Supabase not connected: {conn_status.get('error')}. Falling back to SQLite.")
+except ImportError as e:
+    logger.warning(f"FB Ads: Supabase module not available: {e}. Using SQLite.")
 
 # Column mapping for CSV to database
 COLUMN_MAPPING = {
@@ -386,6 +424,10 @@ def upload_fb_ads_data(df: pd.DataFrame) -> Tuple[int, int, int]:
     Returns:
         Tuple of (new_count, updated_count, unchanged_count)
     """
+    if USE_SUPABASE:
+        return supabase_upload_fb_ads_data(df)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -539,6 +581,10 @@ def load_fb_ads_data(
     ad_sets: Optional[list] = None
 ) -> pd.DataFrame:
     """Load FB Ads data with optional filters."""
+    if USE_SUPABASE:
+        return supabase_load_fb_ads_data(start_date, end_date, campaigns, ad_sets)
+
+    # SQLite fallback
     conn = get_db_connection()
 
     query = "SELECT * FROM fb_ads_data WHERE 1=1"
@@ -572,6 +618,10 @@ def load_fb_ads_data(
 
 def get_unique_campaigns() -> list:
     """Get list of unique campaign names."""
+    if USE_SUPABASE:
+        return supabase_get_unique_campaigns()
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT DISTINCT [Campaign name] FROM fb_ads_data WHERE [Campaign name] IS NOT NULL ORDER BY [Campaign name]")
@@ -582,6 +632,10 @@ def get_unique_campaigns() -> list:
 
 def get_unique_ad_sets(campaigns: Optional[list] = None) -> list:
     """Get list of unique ad set names, optionally filtered by campaigns."""
+    if USE_SUPABASE:
+        return supabase_get_unique_ad_sets(campaigns)
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -599,6 +653,10 @@ def get_unique_ad_sets(campaigns: Optional[list] = None) -> list:
 
 def get_ad_history(ad_name: str) -> pd.DataFrame:
     """Get full history for a specific ad."""
+    if USE_SUPABASE:
+        return supabase_get_ad_history(ad_name)
+
+    # SQLite fallback
     conn = get_db_connection()
     query = "SELECT * FROM fb_ads_data WHERE [Ad name] = ? ORDER BY [Reporting starts] ASC"
     df = pd.read_sql_query(query, conn, params=[ad_name])
@@ -608,6 +666,10 @@ def get_ad_history(ad_name: str) -> pd.DataFrame:
 
 def get_date_range() -> Tuple[Optional[str], Optional[str]]:
     """Get min and max dates in the database."""
+    if USE_SUPABASE:
+        return supabase_get_date_range()
+
+    # SQLite fallback
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT MIN([Reporting starts]), MAX([Reporting starts]) FROM fb_ads_data")

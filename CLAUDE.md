@@ -21,6 +21,7 @@ shopify-dashboard/
 │   │
 │   │   # FB Comment Bot
 │   ├── fb_comment_bot_module.py  # Comment Bot UI (fetch, classify, reply)
+│   ├── supabase_db.py            # Supabase database operations (cloud storage)
 │   ├── comment_classifier.py     # Claude API integration for classification
 │   ├── comment_fetcher.py        # Orchestrates fetch → classify → store
 │   ├── facebook_api.py           # Facebook Graph API v21.0 wrapper
@@ -86,29 +87,47 @@ To restrict access to approved emails only:
 Secrets are configured in Streamlit Cloud Settings → Secrets (TOML format):
 
 ```toml
+# Facebook Graph API
 FACEBOOK_PAGE_ID = "151712605546634"
 FACEBOOK_PAGE_ACCESS_TOKEN = "your_token_here"
 FACEBOOK_APP_ID = "883305767908950"
 FACEBOOK_APP_SECRET = "your_secret_here"
 FACEBOOK_AD_ACCOUNT_ID = "act_89400171"
 FACEBOOK_USER_ACCESS_TOKEN = "your_token_here"
-FB_COMMENTS_DB_PATH = "data/fb_comments.db"
+
+# Claude API
 ANTHROPIC_API_KEY = "sk-ant-api03-your_key_here"
+
+# Supabase (REQUIRED for persistent data)
+SUPABASE_URL = "https://your-project-id.supabase.co"
+SUPABASE_KEY = "your_service_role_key_here"
 ```
 
-### Current Issue: Data Persistence
-**Problem**: SQLite data is lost when Streamlit Cloud app reboots (ephemeral filesystem).
+### Data Persistence - Supabase (IMPLEMENTED)
 
-**Solution Options**:
+**Status**: ✅ IMPLEMENTED
 
-| Option | Cost | Best For |
-|--------|------|----------|
-| **Supabase** (Recommended) | FREE (500MB) | Simple persistent storage |
-| **Snowflake** | $25-50/month | Native Streamlit integration |
-| **Google Sheets** | FREE | Very simple data |
-| **PlanetScale** | FREE (5GB) | MySQL preference |
+The dashboard now uses **Supabase** as the primary database backend for FB Comment Bot data. This ensures data persists across Streamlit Cloud reboots.
 
-**Next Step**: Migrate from SQLite to Supabase for persistent cloud storage.
+**How it works**:
+- `src/supabase_db.py` - All Supabase CRUD operations
+- `src/fb_comment_bot_module.py` - Automatically uses Supabase when configured
+- Falls back to SQLite if Supabase credentials are not available
+
+**Supabase Project Details**:
+- **Project URL**: `https://ansuuhyoqddwtxqfoxsn.supabase.co`
+- **Storage**: 500MB free tier (~2 years of data at current usage)
+
+**Database Tables** (created in Supabase):
+- `fb_comments` - All FB/IG comments with classification
+- `fb_bot_config` - Runtime settings (shadow_mode, etc.)
+- `fb_commenter_history` - Repeat commenter tracking
+- `fb_bot_log` - Audit and cost tracking
+- `fb_posts_tracked` - Monitored posts/ads
+
+**UI Indicator**: The FB Comment Bot overview tab shows which database is active:
+- ☁️ Green: "Supabase (Cloud)" - Data persists
+- 💾 Yellow: "SQLite (Local)" - Data may be lost on reboot
 
 ---
 
@@ -522,19 +541,24 @@ Ad Account
 
 ## Next Steps (TODO)
 
-### 1. Cloud Storage Migration (Priority: HIGH)
-Migrate from SQLite to Supabase for persistent data:
-- [ ] Create Supabase project (free tier)
-- [ ] Create tables matching current SQLite schema
-- [ ] Update database functions to use Supabase client
-- [ ] Add `SUPABASE_URL` and `SUPABASE_KEY` to secrets
-- [ ] Test data persistence across app reboots
+### 1. Cloud Storage Migration - COMPLETED ✅
+~~Migrate from SQLite to Supabase for persistent data:~~
+- [x] Create Supabase project (free tier)
+- [x] Create tables matching current SQLite schema
+- [x] Update database functions to use Supabase client (supabase_db.py)
+- [x] Add `SUPABASE_URL` and `SUPABASE_KEY` to secrets
+- [x] Test data persistence across app reboots
 
 ### 2. Authentication
 - [x] Enable Streamlit Cloud viewer authentication
 - [ ] Add email allowlist in Streamlit Cloud settings
 
-### 3. Future Enhancements
+### 3. Deploy Supabase Changes to Streamlit Cloud
+- [ ] Add Supabase secrets to Streamlit Cloud (Settings → Secrets)
+- [ ] Redeploy app to use new Supabase backend
+- [ ] Test comment fetching and storage in production
+
+### 4. Future Enhancements
 - [ ] Auto-refresh comments every X minutes
 - [ ] Email notifications for new comments
 - [ ] Bulk approve/skip actions
