@@ -83,9 +83,11 @@ def check_fb_ads_supabase_connection() -> Dict[str, Any]:
 def _convert_row_to_supabase(row: Dict[str, Any]) -> Dict[str, Any]:
     """Convert a row with original column names to Supabase column names."""
     # Columns that should be integers in the database
+    # These typically represent counts or whole numbers
     INTEGER_COLUMNS = {
         'purchases', 'impressions', 'reach', 'link_clicks',
-        'landing_page_views', 'checkouts_initiated', 'adds_to_cart'
+        'landing_page_views', 'checkouts_initiated', 'adds_to_cart',
+        'video_avg_play_time'
     }
 
     result = {}
@@ -95,12 +97,19 @@ def _convert_row_to_supabase(row: Dict[str, Any]) -> Dict[str, Any]:
             # Convert NaN to None
             if pd.isna(value):
                 value = None
-            # Convert float to int for integer columns (e.g., 38.0 -> 38)
-            elif supabase_name in INTEGER_COLUMNS and value is not None:
-                try:
-                    value = int(float(value))
-                except (ValueError, TypeError):
-                    value = None
+            elif value is not None:
+                # Convert float to int for integer columns (e.g., 38.0 -> 38)
+                if supabase_name in INTEGER_COLUMNS:
+                    try:
+                        value = int(float(value))
+                    except (ValueError, TypeError):
+                        value = None
+                # Ensure numeric values are proper floats (not numpy types)
+                elif isinstance(value, (int, float)) and not isinstance(value, bool):
+                    try:
+                        value = float(value)
+                    except (ValueError, TypeError):
+                        pass
             result[supabase_name] = value
     return result
 
