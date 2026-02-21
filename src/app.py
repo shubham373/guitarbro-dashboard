@@ -6,6 +6,9 @@ import re
 from datetime import datetime
 
 from fb_ads_module import render_fb_ads_module
+from fb_comment_bot_module import render_fb_comment_bot_module
+from user_journey_module import render_user_journey_module
+from logistics_module import render_logistics_module
 
 # Page config must be first Streamlit command
 st.set_page_config(
@@ -21,9 +24,19 @@ st.set_page_config(
 def inject_custom_css():
     st.markdown("""
     <style>
-    /* Main background */
+    /* Main background - WHITE */
     .stApp {
-        background-color: #F7F8FA;
+        background-color: #FFFFFF;
+    }
+
+    /* FORCE ALL TEXT TO BE BLACK */
+    .stApp, .stApp * {
+        color: #1A1A1A !important;
+    }
+
+    /* Exception: White text on dark buttons */
+    .stButton > button {
+        color: #FFFFFF !important;
     }
 
     /* Sidebar styling */
@@ -33,7 +46,35 @@ def inject_custom_css():
     }
 
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
-        color: #1A1A1A;
+        color: #1A1A1A !important;
+    }
+
+    /* All text elements - force black */
+    p, span, div, label, h1, h2, h3, h4, h5, h6, caption, small {
+        color: #1A1A1A !important;
+    }
+
+    /* Streamlit specific elements */
+    [data-testid="stMarkdownContainer"] {
+        color: #1A1A1A !important;
+    }
+
+    [data-testid="stCaption"] {
+        color: #374151 !important;
+    }
+
+    .stTextInput label, .stSelectbox label, .stDateInput label, .stFileUploader label {
+        color: #1A1A1A !important;
+    }
+
+    /* Tab text */
+    .stTabs [data-baseweb="tab"] {
+        color: #1A1A1A !important;
+    }
+
+    .stTabs [aria-selected="true"] {
+        color: #1A1A1A !important;
+        font-weight: 600 !important;
     }
 
     /* Hide default Streamlit branding */
@@ -270,7 +311,7 @@ def inject_custom_css():
 
     /* Streamlit metric override */
     [data-testid="stMetric"] {
-        background-color: #FFFFFF;
+        background-color: #F3F4F6;
         padding: 16px;
         border-radius: 12px;
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
@@ -278,14 +319,58 @@ def inject_custom_css():
     }
 
     [data-testid="stMetricLabel"] {
-        color: #6B7280 !important;
+        color: #1A1A1A !important;
         font-size: 14px !important;
+        font-weight: 500 !important;
     }
 
     [data-testid="stMetricValue"] {
         color: #1A1A1A !important;
         font-size: 28px !important;
         font-weight: 700 !important;
+    }
+
+    [data-testid="stMetricDelta"] {
+        color: #374151 !important;
+    }
+
+    /* Pills/Badges - light gray background */
+    .stBadge, [data-testid="stBadge"] {
+        background-color: #E5E7EB !important;
+        color: #1A1A1A !important;
+    }
+
+    /* Info/Success/Warning/Error boxes - ensure dark text */
+    .stAlert {
+        color: #1A1A1A !important;
+    }
+
+    .stAlert > div {
+        color: #1A1A1A !important;
+    }
+
+    /* Dataframe/Table text */
+    [data-testid="stDataFrame"], [data-testid="stTable"] {
+        color: #1A1A1A !important;
+    }
+
+    .stDataFrame th, .stDataFrame td {
+        color: #1A1A1A !important;
+    }
+
+    /* Chart titles and labels */
+    .stPlotlyChart text {
+        fill: #1A1A1A !important;
+    }
+
+    /* Expander text */
+    .streamlit-expanderHeader {
+        color: #1A1A1A !important;
+    }
+
+    /* Subheader */
+    .stSubheader, [data-testid="stSubheader"] {
+        color: #1A1A1A !important;
     }
 
     /* Button styling - white text on dark buttons */
@@ -582,6 +667,25 @@ def render_fb_ads_page():
     render_fb_ads_module()
 
 
+def render_fb_comment_bot_page():
+    """Render the FB Comment Bot module page."""
+    st.markdown('<p class="page-title">FB Comment Bot</p>', unsafe_allow_html=True)
+    st.markdown('<p class="page-subtitle">Automated comment management and reply system</p>', unsafe_allow_html=True)
+    render_fb_comment_bot_module()
+
+
+def render_user_journey_page():
+    """Render the User Journey Tracker module page."""
+    st.markdown('<p class="page-title">User Journey Tracker</p>', unsafe_allow_html=True)
+    st.markdown('<p class="page-subtitle">Track customer journeys from order to upsell</p>', unsafe_allow_html=True)
+    render_user_journey_module()
+
+
+def render_logistics_recon_page():
+    """Render the Logistics Reconciliation module page."""
+    render_logistics_module()
+
+
 def render_live_learning_page():
     """Render the Live Learning module page."""
     st.markdown('<p class="page-title">Live Learning</p>', unsafe_allow_html=True)
@@ -831,7 +935,10 @@ def render_sidebar():
         # Define navigation items
         nav_items = [
             ("FB Ads", "fb_ads", "📊"),
-            ("Logistics", "logistics", "🚚"),
+            ("FB Comment Bot", "fb_comment_bot", "💬"),
+            ("User Journey", "user_journey", "🎯"),
+            ("Logistics Recon", "logistics_recon", "📦"),
+            ("Logistics (Old)", "logistics", "🚚"),
             ("Live Learning", "live_learning", "🎓"),
             ("Inventory", "inventory", "📦"),
             ("Creative Pipeline", "creative_pipeline", "🎨"),
@@ -840,7 +947,7 @@ def render_sidebar():
 
         # Initialize session state for active page
         if "active_page" not in st.session_state:
-            st.session_state.active_page = "logistics"  # Default to Logistics
+            st.session_state.active_page = "logistics_recon"  # Default to Logistics Recon
 
         # Render navigation buttons
         for label, key, icon in nav_items:
@@ -873,7 +980,7 @@ def main():
 
     # Initialize session state for active page
     if "active_page" not in st.session_state:
-        st.session_state.active_page = "logistics"
+        st.session_state.active_page = "logistics_recon"
 
     # Always render sidebar
     render_sidebar()
@@ -892,6 +999,9 @@ def main():
     # Render the active page
     page_map = {
         "fb_ads": render_fb_ads_page,
+        "fb_comment_bot": render_fb_comment_bot_page,
+        "user_journey": render_user_journey_page,
+        "logistics_recon": render_logistics_recon_page,
         "logistics": render_logistics_page,
         "live_learning": render_live_learning_page,
         "inventory": render_inventory_page,
@@ -899,8 +1009,8 @@ def main():
         "revenue": render_revenue_page,
     }
 
-    active_page = st.session_state.get("active_page", "logistics")
-    page_renderer = page_map.get(active_page, render_logistics_page)
+    active_page = st.session_state.get("active_page", "logistics_recon")
+    page_renderer = page_map.get(active_page, render_logistics_recon_page)
     page_renderer()
 
 

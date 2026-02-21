@@ -1,15 +1,48 @@
-# Database
-data/orders.db
-data/fb_ads.db
-data/ad_comments.csv
+# Database files
+data/*.db
+data/*.csv
+src/data/*.db
 
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
 # Environment
 .env
+venv/
+env/
+.venv/
+
+# Streamlit secrets (never commit actual secrets)
+.streamlit/secrets.toml
 
 # OS
 .DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
