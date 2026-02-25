@@ -25,15 +25,19 @@ def get_secret(key: str, default: str = None) -> str:
     Returns:
         The secret value or default
     """
-    # Try Streamlit secrets first (for Streamlit Cloud deployment)
+    # First try environment variable (works for both local and cloud)
+    env_value = os.getenv(key)
+    if env_value:
+        return env_value
+
+    # Try Streamlit secrets (for Streamlit Cloud deployment)
     try:
-        if hasattr(st, 'secrets') and key in st.secrets:
-            return st.secrets[key]
-    except Exception:
+        return st.secrets[key]
+    except:
+        # No secrets file or key not found - this is fine for local development
         pass
 
-    # Fall back to environment variable (for local development)
-    return os.getenv(key, default)
+    return default
 
 
 # Export commonly used secrets as module-level variables
@@ -59,3 +63,14 @@ def get_anthropic_api_key() -> str:
 
 def get_db_path() -> str:
     return get_secret('FB_COMMENTS_DB_PATH', 'data/fb_comments.db')
+
+
+# Shopify API Configuration
+def get_shopify_store_url() -> str:
+    """Get Shopify store URL (e.g., 'playguitarbro.myshopify.com')"""
+    return get_secret('SHOPIFY_STORE_URL', '')
+
+
+def get_shopify_access_token() -> str:
+    """Get Shopify Admin API access token"""
+    return get_secret('SHOPIFY_ACCESS_TOKEN', '')

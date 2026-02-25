@@ -118,8 +118,122 @@ def render_logistics_module():
 def render_dashboard_tab():
     """Render the dashboard tab."""
 
-    # Upload section
-    st.subheader("📤 Data Upload")
+    # =========================================
+    # SHOPIFY SYNC SECTION
+    # =========================================
+    st.subheader("🔄 Sync from Shopify")
+
+    # Import sync functions
+    try:
+        from shopify_api import (
+            sync_shopify_orders,
+            get_last_sync_timestamp,
+            save_last_sync_timestamp,
+            test_shopify_connection
+        )
+        shopify_api_available = True
+    except Exception as e:
+        shopify_api_available = False
+        st.warning(f"⚠️ Shopify API not configured: {e}")
+
+    if shopify_api_available:
+        # Show last sync timestamp
+        last_sync = get_last_sync_timestamp()
+        if last_sync:
+            st.caption(f"Last synced: {last_sync.strftime('%d %b %Y, %I:%M %p')}")
+        else:
+            st.caption("Never synced")
+
+        col_sync1, col_sync2 = st.columns([1, 1])
+
+        with col_sync1:
+            # Quick Sync button (last 7 days)
+            if st.button("🔄 Quick Sync (Last 7 days)", type="primary", use_container_width=True, key="shopify_quick_sync"):
+                st.session_state['run_shopify_quick_sync'] = True
+
+        with col_sync2:
+            # Test connection
+            if st.button("🔌 Test Connection", use_container_width=True, key="shopify_test_conn"):
+                with st.spinner("Testing Shopify connection..."):
+                    result = test_shopify_connection()
+                    if result['success']:
+                        st.success(f"✅ Connected to: {result.get('shop_name', 'Unknown')} ({result.get('shop_domain', '')})")
+                    else:
+                        st.error(f"❌ Connection failed: {result['message']}")
+
+        # Handle quick sync outside of button to avoid nesting issues
+        if st.session_state.get('run_shopify_quick_sync'):
+            st.session_state['run_shopify_quick_sync'] = False
+            with st.status("Syncing Shopify orders...", expanded=True) as status:
+                try:
+                    end_date = datetime.now().strftime('%Y-%m-%d')
+                    start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+
+                    def progress_cb(msg, pct):
+                        status.update(label=msg)
+
+                    new_count, updated_count, failed_count = sync_shopify_orders(
+                        start_date, end_date, progress_cb
+                    )
+                    save_last_sync_timestamp()
+
+                    # Auto-run matching
+                    match_result = run_matching()
+
+                    status.update(label=f"✅ Done: {new_count} new, {updated_count} updated, {match_result['matched']} matched", state="complete")
+                except Exception as e:
+                    status.update(label=f"❌ Error: {str(e)}", state="error")
+
+        # Custom date range (expandable)
+        with st.expander("📅 Custom Date Range (for backfills)"):
+            col_d1, col_d2 = st.columns([1, 1])
+            with col_d1:
+                sync_start = st.date_input(
+                    "Start Date",
+                    value=datetime.now() - timedelta(days=30),
+                    key="shopify_sync_start"
+                )
+            with col_d2:
+                sync_end = st.date_input(
+                    "End Date",
+                    value=datetime.now(),
+                    key="shopify_sync_end"
+                )
+
+            if st.button("🔄 Sync Custom Range", key="shopify_custom_sync", use_container_width=True):
+                st.session_state['run_shopify_custom_sync'] = True
+                st.session_state['shopify_custom_start'] = sync_start.strftime('%Y-%m-%d')
+                st.session_state['shopify_custom_end'] = sync_end.strftime('%Y-%m-%d')
+
+        # Handle custom sync outside expander
+        if st.session_state.get('run_shopify_custom_sync'):
+            st.session_state['run_shopify_custom_sync'] = False
+            custom_start = st.session_state.get('shopify_custom_start')
+            custom_end = st.session_state.get('shopify_custom_end')
+
+            with st.status(f"Syncing {custom_start} to {custom_end}...", expanded=True) as status:
+                try:
+                    def progress_cb(msg, pct):
+                        status.update(label=msg)
+
+                    new_count, updated_count, failed_count = sync_shopify_orders(
+                        custom_start, custom_end, progress_cb
+                    )
+                    save_last_sync_timestamp()
+
+                    # Auto-run matching
+                    match_result = run_matching()
+
+                    status.update(label=f"✅ Done: {new_count} new, {updated_count} updated, {match_result['matched']} matched", state="complete")
+                except Exception as e:
+                    status.update(label=f"❌ Error: {str(e)}", state="error")
+
+    st.divider()
+
+    # =========================================
+    # MANUAL UPLOAD SECTION
+    # =========================================
+    st.subheader("📤 Manual Upload")
 
     col1, col2, col3 = st.columns([1, 1, 1])
 
