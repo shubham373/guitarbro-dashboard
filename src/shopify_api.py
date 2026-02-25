@@ -81,23 +81,27 @@ class ShopifyAPI:
             'Content-Type': 'application/json'
         })
 
-    def _make_request(self, endpoint: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+    def _make_request(self, endpoint: str, params: Dict[str, Any] = None, full_url: str = None) -> Tuple[Dict[str, Any], Optional[str]]:
         """
         Make a request to the Shopify Admin API.
 
         Args:
             endpoint: API endpoint (e.g., '/orders.json')
             params: Query parameters
+            full_url: Optional full URL for pagination (overrides endpoint)
 
         Returns:
-            API response as dictionary
+            Tuple of (API response dict, next_page_url or None)
         """
-        url = f"{self.base_url}{endpoint}"
+        url = full_url if full_url else f"{self.base_url}{endpoint}"
 
         retries = 0
         while retries < MAX_RETRIES:
             try:
-                response = self.session.get(url, params=params, timeout=DEFAULT_TIMEOUT)
+                if full_url:
+                    response = self.session.get(url, timeout=DEFAULT_TIMEOUT)
+                else:
+                    response = self.session.get(url, params=params, timeout=DEFAULT_TIMEOUT)
 
                 # Handle rate limiting
                 if response.status_code == 429:
@@ -109,7 +113,18 @@ class ShopifyAPI:
                     continue
 
                 response.raise_for_status()
-                return response.json()
+
+                # Parse Link header for pagination
+                next_url = None
+                link_header = response.headers.get('Link', '')
+                if link_header:
+                    # Parse Link header: <url>; rel="next", <url>; rel="previous"
+                    for link in link_header.split(','):
+                        if 'rel="next"' in link:
+                            next_url = link.split(';')[0].strip().strip('<>')
+                            break
+
+                return response.json(), next_url
 
             except requests.exceptions.Timeout:
                 logger.warning(f"Request timeout, retry {retries + 1}/{MAX_RETRIES}")
@@ -128,26 +143,45 @@ class ShopifyAPI:
 
         raise Exception(f"Max retries ({MAX_RETRIES}) exceeded")
 
-    def fetch_orders(
-        self,
-        start_date: str,
-        end_date: str,
-        progress_callback: Optional[Callable[[str, float], None]] = None
-    ) -> List[Dict]:
+    def _generate_date_chunks(self, start_date: str, end_date: str, chunk_days: int = 30) -> List[Tuple[str, str]]:
         """
-        Fetch orders for a date range.
+        Split a date range into smaller chunks to handle large datasets.
 
         Args:
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
-            progress_callback: Optional callback(message, progress_pct)
+            chunk_days: Maximum days per chunk (default 30)
+
+        Returns:
+            List of (chunk_start, chunk_end) tuples
+        """
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+
+        chunks = []
+        current_start = start_dt
+
+        while current_start <= end_dt:
+            current_end = min(current_start + timedelta(days=chunk_days - 1), end_dt)
+            chunks.append((
+                current_start.strftime('%Y-%m-%d'),
+                current_end.strftime('%Y-%m-%d')
+            ))
+            current_start = current_end + timedelta(days=1)
+
+        return chunks
+
+    def _fetch_orders_for_period(self, start_date: str, end_date: str) -> List[Dict]:
+        """
+        Fetch all orders for a single date period with proper Link header pagination.
+
+        Args:
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
 
         Returns:
             List of order dictionaries
         """
-        if progress_callback:
-            progress_callback("Connecting to Shopify API...", 0.1)
-
         all_orders = []
 
         # Convert dates to ISO format with time
@@ -158,49 +192,103 @@ class ShopifyAPI:
             'created_at_min': start_iso,
             'created_at_max': end_iso,
             'limit': ORDERS_PER_PAGE,
-            'status': 'any',  # Include all orders (open, closed, cancelled)
+            'status': 'any',
         }
 
-        if progress_callback:
-            progress_callback(f"Fetching orders from {start_date} to {end_date}...", 0.2)
-
         page = 1
-        while True:
-            logger.info(f"Fetching orders page {page}...")
+        next_url = None
 
-            response = self._make_request('/orders.json', params)
-            orders = response.get('orders', [])
+        # First request
+        response_data, next_url = self._make_request('/orders.json', params)
+        orders = response_data.get('orders', [])
+        all_orders.extend(orders)
+
+        # Continue while there's a next page
+        while next_url:
+            page += 1
+            response_data, next_url = self._make_request(None, None, full_url=next_url)
+            orders = response_data.get('orders', [])
 
             if not orders:
                 break
 
             all_orders.extend(orders)
-            logger.info(f"Fetched {len(orders)} orders (page {page}, total: {len(all_orders)})")
-
-            if progress_callback:
-                progress_callback(f"Fetched {len(all_orders)} orders...", min(0.2 + (page * 0.1), 0.8))
-
-            # Check for pagination
-            link_header = None  # Shopify uses Link header for pagination
-            # For simplicity, use the since_id approach
-            if len(orders) < ORDERS_PER_PAGE:
-                break
-
-            # Get the last order's ID for pagination
-            last_order_id = orders[-1]['id']
-            params['since_id'] = last_order_id
-            page += 1
 
             # Safety limit
-            if page > 100:
-                logger.warning("Reached page limit (100), stopping pagination")
+            if page > 200:
+                logger.warning(f"Reached page limit (200) for {start_date} to {end_date}")
                 break
 
-        if progress_callback:
-            progress_callback(f"Fetched {len(all_orders)} total orders", 0.9)
-
-        logger.info(f"Total orders fetched: {len(all_orders)}")
         return all_orders
+
+    def fetch_orders(
+        self,
+        start_date: str,
+        end_date: str,
+        progress_callback: Optional[Callable[[str, float], None]] = None
+    ) -> List[Dict]:
+        """
+        Fetch orders for a date range.
+        Automatically chunks large date ranges for reliability.
+
+        Args:
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+            progress_callback: Optional callback(message, progress_pct)
+
+        Returns:
+            List of order dictionaries
+        """
+        if progress_callback:
+            progress_callback("Connecting to Shopify API...", 0.05)
+
+        # Calculate date range
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+        total_days = (end_dt - start_dt).days + 1
+
+        # For large ranges (>30 days), split into monthly chunks
+        if total_days > 30:
+            chunks = self._generate_date_chunks(start_date, end_date, chunk_days=30)
+            logger.info(f"Large date range ({total_days} days), splitting into {len(chunks)} chunks")
+
+            if progress_callback:
+                progress_callback(f"Fetching {total_days} days in {len(chunks)} batches...", 0.1)
+
+            all_orders = []
+
+            for i, (chunk_start, chunk_end) in enumerate(chunks):
+                progress_pct = 0.1 + (0.8 * (i / len(chunks)))
+
+                if progress_callback:
+                    progress_callback(f"Fetching {chunk_start} to {chunk_end} ({i+1}/{len(chunks)})...", progress_pct)
+
+                try:
+                    chunk_orders = self._fetch_orders_for_period(chunk_start, chunk_end)
+                    all_orders.extend(chunk_orders)
+                    logger.info(f"Chunk {i+1}/{len(chunks)}: {len(chunk_orders)} orders ({chunk_start} to {chunk_end})")
+                except Exception as e:
+                    logger.error(f"Error fetching chunk {chunk_start} to {chunk_end}: {e}")
+                    continue
+
+            if progress_callback:
+                progress_callback(f"Fetched {len(all_orders)} total orders", 0.9)
+
+            logger.info(f"Total orders fetched: {len(all_orders)}")
+            return all_orders
+
+        else:
+            # Small date range - fetch directly
+            if progress_callback:
+                progress_callback(f"Fetching orders from {start_date} to {end_date}...", 0.2)
+
+            all_orders = self._fetch_orders_for_period(start_date, end_date)
+
+            if progress_callback:
+                progress_callback(f"Fetched {len(all_orders)} total orders", 0.9)
+
+            logger.info(f"Total orders fetched: {len(all_orders)}")
+            return all_orders
 
 
 # =============================================================================
@@ -479,7 +567,7 @@ def test_shopify_connection() -> Dict[str, Any]:
     """
     try:
         api = ShopifyAPI()
-        response = api._make_request('/shop.json')
+        response, _ = api._make_request('/shop.json')
         shop = response.get('shop', {})
         return {
             'success': True,
