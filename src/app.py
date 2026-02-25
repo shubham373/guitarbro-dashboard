@@ -24,6 +24,7 @@ from fb_ads_module import render_fb_ads_module
 from fb_comment_bot_module import render_fb_comment_bot_module
 from user_journey_module import render_user_journey_module
 from logistics_module import render_logistics_module
+from live_learning_module import render_live_learning_module
 
 # Page config must be first Streamlit command
 st.set_page_config(
@@ -703,9 +704,7 @@ def render_logistics_recon_page():
 
 def render_live_learning_page():
     """Render the Live Learning module page."""
-    st.markdown('<p class="page-title">Live Learning</p>', unsafe_allow_html=True)
-    st.markdown('<p class="page-subtitle">Educational content performance tracking</p>', unsafe_allow_html=True)
-    render_placeholder_page("Live Learning Module", "🎓")
+    render_live_learning_module()
 
 
 def render_inventory_page():
@@ -950,14 +949,8 @@ def render_sidebar():
         # Define navigation items
         nav_items = [
             ("FB Ads", "fb_ads", "📊"),
-            ("FB Comment Bot", "fb_comment_bot", "💬"),
-            ("User Journey", "user_journey", "🎯"),
             ("Logistics Recon", "logistics_recon", "📦"),
-            ("Logistics (Old)", "logistics", "🚚"),
             ("Live Learning", "live_learning", "🎓"),
-            ("Inventory", "inventory", "📦"),
-            ("Creative Pipeline", "creative_pipeline", "🎨"),
-            ("Revenue", "revenue", "💰"),
         ]
 
         # Initialize session state for active page

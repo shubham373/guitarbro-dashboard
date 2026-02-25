@@ -9,6 +9,7 @@ A comprehensive analytics dashboard for GuitarBro's Shopify store and Facebook a
 - **FB Comment Bot**: Automated comment fetching, AI classification, and reply management
 - **User Journey Tracking**: Order → Zoom attendance matching
 - **Logistics Reconciliation**: Shopify + Prozo data matching, delivery tracking
+- **Live Learning**: Luma registrations → Zoom attendance → Shopify order matching
 
 ## Project Structure
 
@@ -37,7 +38,12 @@ shopify-dashboard/
 │   ├── logistics_module.py       # Logistics UI (Dashboard, Journey, Line Items)
 │   ├── logistics_db.py           # Database schema & CRUD operations
 │   ├── logistics_parsers.py      # CSV parsers for Shopify & Prozo
-│   └── logistics_engine.py       # Matching engine & metrics calculation
+│   ├── logistics_engine.py       # Matching engine & metrics calculation
+│   │
+│   │   # Live Learning
+│   ├── live_learning_module.py   # Live Learning UI (Dashboard, Upload, Events)
+│   ├── live_learning_db.py       # Database schema & user deduplication
+│   └── live_learning_parsers.py  # CSV parsers for Luma & Zoom
 │
 ├── .streamlit/
 │   ├── config.toml               # Streamlit theme configuration
@@ -373,6 +379,49 @@ def render_your_module():
 - Run Matching
 - Unified Users
 - Audit Log
+
+### 5. Live Learning Module
+
+**Files:** `live_learning_module.py`, `live_learning_db.py`, `live_learning_parsers.py`
+
+**Purpose:** Track user journey from Luma event registrations → Zoom meeting attendance → Shopify orders.
+
+**Features:**
+- **Luma Import**: Parse guest list CSV exports, track registrations
+- **Zoom Import**: Parse attendance reports, aggregate duration & join frequency
+- **User Deduplication**: Match users by email OR phone across both sources
+- **Order Matching**: Link users to Shopify orders (searches from latest orders first)
+- **Date Range Filtering**: Filter dashboard by date range (not event dropdown)
+- **Metrics**: Registrations, attendance rate, match rate, avg duration, repeat registrants
+
+**Database Tables (in `logistics.db`):**
+- `live_events`: Events from Luma or Zoom uploads
+- `live_unified_users`: Deduplicated users with all emails/phones/names
+- `live_event_registrations`: Registration records per user per event
+- `live_event_attendance`: Attendance records with duration, join frequency
+
+**User Deduplication Logic:**
+1. Check if email exists in any user's `primary_email` or `all_emails` array
+2. If no email match, check if phone exists in any user's `primary_phone` or `all_phones` array
+3. If match found, merge new contact info into existing user
+4. If no match, create new unified user
+
+**Zoom Parsing:**
+- Aggregates multiple join/leave sessions for same user
+- Sums duration across sessions
+- Counts join frequency (how many times user joined)
+- Tracks first join time and last leave time
+- Skips host entries
+
+**Order Matching:**
+- Matches `all_emails` and `all_phones` against `raw_shopify_orders` table
+- Searches from latest orders first (most recent likely to match)
+- Records match method: 'email', 'phone', or 'both'
+
+**UI Tabs:**
+- Dashboard: Metrics overview, user journey table with filtering
+- Upload Data: Luma and Zoom CSV upload with preview
+- Events: List of all uploaded events
 
 ---
 
