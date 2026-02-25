@@ -1427,7 +1427,7 @@ def render_fb_ads_module():
                 status.update(label="Sync Failed", state="error")
                 st.error(f"Error: {str(e)}")
 
-    # Custom date range (expandable)
+    # Custom date range (expandable) - inputs only, sync handled outside
     with st.expander("📅 Custom Date Range (for backfills)"):
         custom_col1, custom_col2, custom_col3 = st.columns([2, 2, 1])
 
@@ -1447,35 +1447,36 @@ def render_fb_ads_module():
             st.write("")  # Spacer for alignment
             custom_sync_clicked = st.button("Sync", key="fb_ads_custom_sync", use_container_width=True)
 
-        if custom_sync_clicked:
-            with st.status("Syncing custom date range...", expanded=True) as status:
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+    # Handle custom sync OUTSIDE the expander (st.status can't be nested)
+    if custom_sync_clicked:
+        with st.status("Syncing custom date range...", expanded=True) as status:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
 
-                def update_progress_custom(message: str, pct: float):
-                    status_text.write(message)
-                    progress_bar.progress(pct)
+            def update_progress_custom(message: str, pct: float):
+                status_text.write(message)
+                progress_bar.progress(pct)
 
-                try:
-                    new_count, updated_count, unchanged_count = sync_fb_ads_data(
-                        custom_start.strftime('%Y-%m-%d'),
-                        custom_end.strftime('%Y-%m-%d'),
-                        progress_callback=update_progress_custom
-                    )
-                    save_last_sync_timestamp()
+            try:
+                new_count, updated_count, unchanged_count = sync_fb_ads_data(
+                    custom_start.strftime('%Y-%m-%d'),
+                    custom_end.strftime('%Y-%m-%d'),
+                    progress_callback=update_progress_custom
+                )
+                save_last_sync_timestamp()
 
-                    if new_count > 0 or updated_count > 0:
-                        status.update(label="Sync Complete!", state="complete")
-                        st.success(f"✅ {new_count} new, {updated_count} updated, {unchanged_count} unchanged")
-                    else:
-                        status.update(label="Sync Complete", state="complete")
-                        st.info(f"ℹ️ No new data. {unchanged_count} records already up to date.")
+                if new_count > 0 or updated_count > 0:
+                    status.update(label="Sync Complete!", state="complete")
+                    st.success(f"✅ {new_count} new, {updated_count} updated, {unchanged_count} unchanged")
+                else:
+                    status.update(label="Sync Complete", state="complete")
+                    st.info(f"ℹ️ No new data. {unchanged_count} records already up to date.")
 
-                    st.rerun()
+                st.rerun()
 
-                except Exception as e:
-                    status.update(label="Sync Failed", state="error")
-                    st.error(f"Error: {str(e)}")
+            except Exception as e:
+                status.update(label="Sync Failed", state="error")
+                st.error(f"Error: {str(e)}")
 
     # Divider
     st.markdown('<div style="height: 1px; background-color: #E5E7EB; margin: 16px 0;"></div>', unsafe_allow_html=True)
