@@ -175,6 +175,72 @@ def render_your_module():
 - Never use inline CSS - always use shared_styles.py
 - Never skip calling inject_custom_css()
 
+### Dropdown / Selectbox Styling
+
+**ALL dropdowns must have:**
+- **Background**: White (`#FFFFFF`)
+- **Text**: Black (`#000000`)
+- **Border**: 2px solid blue (`#3B82F6`)
+- **Hover**: Light blue background (`#DBEAFE`)
+
+```css
+/* Dropdown container */
+[data-baseweb="select"] {
+    background-color: #FFFFFF !important;
+    border: 2px solid #3B82F6 !important;
+}
+
+/* Dropdown menu items */
+[data-baseweb="menu"] li {
+    background-color: #FFFFFF !important;
+    color: #000000 !important;
+}
+
+/* Selected/hover state */
+[data-baseweb="menu"] li:hover {
+    background-color: #DBEAFE !important;
+}
+```
+
+### Date Picker Styling
+
+**Date picker must have:**
+- **Input field**: White background, black text, blue border
+- **Calendar popup**: White background, black text
+- **Selected date**: Blue background (`#3B82F6`), white text
+- **Hover**: Light blue (`#DBEAFE`)
+
+```css
+/* Date input */
+[data-testid="stDateInput"] input {
+    background-color: #FFFFFF !important;
+    color: #000000 !important;
+    border: 2px solid #3B82F6 !important;
+}
+
+/* Calendar - WHITE bg, BLACK text */
+[data-baseweb="calendar"] {
+    background-color: #FFFFFF !important;
+}
+
+[data-baseweb="calendar"] * {
+    color: #000000 !important;
+}
+
+/* Month name, year, day names - all BLACK */
+[data-baseweb="calendar"] th,
+[data-baseweb="calendar"] button {
+    color: #000000 !important;
+    background-color: #FFFFFF !important;
+}
+
+/* Selected day - BLUE bg, WHITE text */
+[data-baseweb="calendar"] [aria-selected="true"] {
+    background-color: #3B82F6 !important;
+    color: #FFFFFF !important;
+}
+```
+
 ---
 
 ## Module Documentation

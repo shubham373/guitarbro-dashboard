@@ -1371,49 +1371,160 @@ def render_fb_ads_module():
         render_detail_view(st.session_state.selected_ad_name)
         return
 
-    # File uploader
-    render_section_header("Upload Data")
-    uploaded_file = st.file_uploader("Upload FB Ads CSV", type=["csv"], key="fb_ads_uploader")
+    # ==========================================================================
+    # SYNC FROM FACEBOOK SECTION
+    # ==========================================================================
+    render_section_header("Sync from Facebook")
 
-    if uploaded_file is not None:
-        uploaded_df = pd.read_csv(uploaded_file)
-        total_rows = len(uploaded_df)
+    # Import sync functions
+    from facebook_ads_api import (
+        sync_fb_ads_data,
+        get_last_sync_timestamp,
+        save_last_sync_timestamp
+    )
 
-        # Debug: Show CSV columns and sample data
-        st.markdown("**Debug: CSV Upload Info**")
-        st.write(f"Columns in CSV: {list(uploaded_df.columns)}")
-        st.write(f"Total rows: {total_rows}")
-        if "Amount spent (INR)" in uploaded_df.columns:
-            st.write(f"Sample spend values: {uploaded_df['Amount spent (INR)'].head(3).tolist()}")
-        if "Purchases" in uploaded_df.columns:
-            st.write(f"Sample purchases values: {uploaded_df['Purchases'].head(3).tolist()}")
+    # Show last sync timestamp
+    last_sync = get_last_sync_timestamp()
+    if last_sync:
+        st.caption(f"Last synced: {last_sync.strftime('%d %b %Y, %I:%M %p')}")
+    else:
+        st.caption("Never synced")
 
-        new_count, updated_count, unchanged_count = upload_fb_ads_data(uploaded_df)
+    # Quick Sync button (last 48 hours)
+    sync_col1, sync_col2 = st.columns([1, 2])
 
-        # Debug: Show database values after upload
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT [Ad name], [Reporting starts], [Amount spent (INR)], [Purchases] FROM fb_ads_data ORDER BY [Reporting starts] DESC LIMIT 3")
-        db_sample = cursor.fetchall()
-        conn.close()
-        st.write("**After upload - DB sample (latest 3 rows):**")
-        for r in db_sample:
-            st.write(f"  {r[0][:40]}... | {r[1]} | Spend: {r[2]} | Purch: {r[3]}")
+    with sync_col1:
+        quick_sync_clicked = st.button("🔄 Quick Sync (Last 48 hrs)", type="primary", use_container_width=True)
 
-        if new_count > 0 or updated_count > 0:
-            st.markdown(
-                f'<div style="background:#ECFDF5; border:1px solid #10B981; border-radius:8px; padding:12px 16px; margin:8px 0;">'
-                f'<span style="color:#065F46; font-size:14px;">✅ {new_count} new, {updated_count} updated, {unchanged_count} unchanged</span>'
-                f'</div>',
-                unsafe_allow_html=True
+    if quick_sync_clicked:
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(hours=48)).strftime('%Y-%m-%d')
+
+        with st.status("Syncing from Facebook Ads API...", expanded=True) as status:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            def update_progress(message: str, pct: float):
+                status_text.write(message)
+                progress_bar.progress(pct)
+
+            try:
+                new_count, updated_count, unchanged_count = sync_fb_ads_data(
+                    start_date, end_date, progress_callback=update_progress
+                )
+                save_last_sync_timestamp()
+
+                if new_count > 0 or updated_count > 0:
+                    status.update(label="Sync Complete!", state="complete")
+                    st.success(f"✅ {new_count} new, {updated_count} updated, {unchanged_count} unchanged")
+                else:
+                    status.update(label="Sync Complete", state="complete")
+                    st.info(f"ℹ️ No new data. {unchanged_count} records already up to date.")
+
+                st.rerun()
+
+            except Exception as e:
+                status.update(label="Sync Failed", state="error")
+                st.error(f"Error: {str(e)}")
+
+    # Custom date range (expandable)
+    with st.expander("📅 Custom Date Range (for backfills)"):
+        custom_col1, custom_col2, custom_col3 = st.columns([2, 2, 1])
+
+        with custom_col1:
+            custom_start = st.date_input(
+                "Start Date",
+                value=datetime.now() - timedelta(days=7),
+                key="fb_ads_sync_start"
             )
-        else:
-            st.markdown(
-                f'<div style="background:#EFF6FF; border:1px solid #3B82F6; border-radius:8px; padding:12px 16px; margin:8px 0;">'
-                f'<span style="color:#1E40AF; font-size:14px;">ℹ️ No changes — all {total_rows} rows already up to date</span>'
-                f'</div>',
-                unsafe_allow_html=True
+        with custom_col2:
+            custom_end = st.date_input(
+                "End Date",
+                value=datetime.now(),
+                key="fb_ads_sync_end"
             )
+        with custom_col3:
+            st.write("")  # Spacer for alignment
+            custom_sync_clicked = st.button("Sync", key="fb_ads_custom_sync", use_container_width=True)
+
+        if custom_sync_clicked:
+            with st.status("Syncing custom date range...", expanded=True) as status:
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
+                def update_progress_custom(message: str, pct: float):
+                    status_text.write(message)
+                    progress_bar.progress(pct)
+
+                try:
+                    new_count, updated_count, unchanged_count = sync_fb_ads_data(
+                        custom_start.strftime('%Y-%m-%d'),
+                        custom_end.strftime('%Y-%m-%d'),
+                        progress_callback=update_progress_custom
+                    )
+                    save_last_sync_timestamp()
+
+                    if new_count > 0 or updated_count > 0:
+                        status.update(label="Sync Complete!", state="complete")
+                        st.success(f"✅ {new_count} new, {updated_count} updated, {unchanged_count} unchanged")
+                    else:
+                        status.update(label="Sync Complete", state="complete")
+                        st.info(f"ℹ️ No new data. {unchanged_count} records already up to date.")
+
+                    st.rerun()
+
+                except Exception as e:
+                    status.update(label="Sync Failed", state="error")
+                    st.error(f"Error: {str(e)}")
+
+    # Divider
+    st.markdown('<div style="height: 1px; background-color: #E5E7EB; margin: 16px 0;"></div>', unsafe_allow_html=True)
+
+    # ==========================================================================
+    # MANUAL UPLOAD SECTION (existing, now collapsed by default)
+    # ==========================================================================
+    with st.expander("📤 Manual CSV Upload"):
+        uploaded_file = st.file_uploader("Upload FB Ads CSV", type=["csv"], key="fb_ads_uploader")
+
+        if uploaded_file is not None:
+            uploaded_df = pd.read_csv(uploaded_file)
+            total_rows = len(uploaded_df)
+
+            # Debug: Show CSV columns and sample data
+            st.markdown("**Debug: CSV Upload Info**")
+            st.write(f"Columns in CSV: {list(uploaded_df.columns)}")
+            st.write(f"Total rows: {total_rows}")
+            if "Amount spent (INR)" in uploaded_df.columns:
+                st.write(f"Sample spend values: {uploaded_df['Amount spent (INR)'].head(3).tolist()}")
+            if "Purchases" in uploaded_df.columns:
+                st.write(f"Sample purchases values: {uploaded_df['Purchases'].head(3).tolist()}")
+
+            new_count, updated_count, unchanged_count = upload_fb_ads_data(uploaded_df)
+
+            # Debug: Show database values after upload
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT [Ad name], [Reporting starts], [Amount spent (INR)], [Purchases] FROM fb_ads_data ORDER BY [Reporting starts] DESC LIMIT 3")
+            db_sample = cursor.fetchall()
+            conn.close()
+            st.write("**After upload - DB sample (latest 3 rows):**")
+            for r in db_sample:
+                st.write(f"  {r[0][:40]}... | {r[1]} | Spend: {r[2]} | Purch: {r[3]}")
+
+            if new_count > 0 or updated_count > 0:
+                st.markdown(
+                    f'<div style="background:#ECFDF5; border:1px solid #10B981; border-radius:8px; padding:12px 16px; margin:8px 0;">'
+                    f'<span style="color:#065F46; font-size:14px;">✅ {new_count} new, {updated_count} updated, {unchanged_count} unchanged</span>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    f'<div style="background:#EFF6FF; border:1px solid #3B82F6; border-radius:8px; padding:12px 16px; margin:8px 0;">'
+                    f'<span style="color:#1E40AF; font-size:14px;">ℹ️ No changes — all {total_rows} rows already up to date</span>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
 
 
     # Check if we have data

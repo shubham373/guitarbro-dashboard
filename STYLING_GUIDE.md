@@ -160,7 +160,107 @@ input, select {
 }
 ```
 
-### 9. Alerts/Info Boxes
+### 9. Dropdowns / Selectbox
+```css
+/* Dropdown container - WHITE bg, bold BLUE border */
+[data-baseweb="select"] {
+    background-color: #FFFFFF;
+    border: 2px solid #3B82F6;
+    border-radius: 8px;
+}
+
+/* Selected value text - BLACK */
+[data-baseweb="select"] span {
+    color: #000000;
+}
+
+/* Dropdown menu - WHITE bg */
+[data-baseweb="menu"] {
+    background-color: #FFFFFF;
+    border: 2px solid #3B82F6;
+}
+
+/* Menu items - BLACK text */
+[data-baseweb="menu"] li {
+    background-color: #FFFFFF;
+    color: #000000;
+}
+
+/* Hover state - Light blue */
+[data-baseweb="menu"] li:hover {
+    background-color: #DBEAFE;
+}
+
+/* Selected item - Light blue, bold */
+[data-baseweb="menu"] li[aria-selected="true"] {
+    background-color: #DBEAFE;
+    font-weight: 600;
+}
+
+/* Multiselect tags */
+[data-baseweb="tag"] {
+    background-color: #DBEAFE;
+    color: #000000;
+    border: 1px solid #93C5FD;
+}
+```
+
+### 10. Date Picker
+```css
+/* Date input field - WHITE bg, bold BLUE border */
+[data-testid="stDateInput"] input {
+    background-color: #FFFFFF;
+    color: #000000;
+    border: 2px solid #3B82F6;
+    border-radius: 8px;
+}
+
+/* Calendar popup - WHITE bg */
+[data-baseweb="calendar"] {
+    background-color: #FFFFFF;
+}
+
+/* ALL calendar text - BLACK */
+[data-baseweb="calendar"] * {
+    color: #000000;
+}
+
+/* Month name, year - BLACK */
+[data-baseweb="calendar"] button {
+    color: #000000;
+    background-color: #FFFFFF;
+}
+
+/* Day names (Sun, Mon, Tue...) - BLACK */
+[data-baseweb="calendar"] th {
+    color: #000000;
+    background-color: #FFFFFF;
+}
+
+/* Calendar days - BLACK */
+[data-baseweb="calendar"] td {
+    color: #000000;
+    background-color: #FFFFFF;
+}
+
+/* Selected day - BLUE bg, WHITE text */
+[data-baseweb="calendar"] [aria-selected="true"] {
+    background-color: #3B82F6;
+    color: #FFFFFF;
+}
+
+/* Hover state - Light blue */
+[data-baseweb="calendar"] td:hover {
+    background-color: #DBEAFE;
+}
+
+/* Navigation arrows - BLACK */
+[data-baseweb="calendar"] svg {
+    fill: #000000;
+}
+```
+
+### 11. Alerts/Info Boxes
 ```css
 /* Blue info box */
 background-color: #DBEAFE;
@@ -168,6 +268,46 @@ color: #000000;
 border: 1px solid #93C5FD;
 
 /* Always BLACK text in alerts */
+```
+
+---
+
+## Dropdown & Date Picker Visual Reference
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  DROPDOWN                                               │
+├─────────────────────────────────────────────────────────┤
+│  ┌─────────────────────────────────────┐                │
+│  │ Select an option         ▼ │ ← WHITE bg, BLACK text  │
+│  └─────────────────────────────────────┘                │
+│        ↓ (on click)                                     │
+│  ┌─────────────────────────────────────┐                │
+│  │ Option 1                   │ ← WHITE bg, BLACK text  │
+│  │ Option 2 (hover)           │ ← LIGHT BLUE bg         │
+│  │ Option 3                   │                         │
+│  └─────────────────────────────────────┘                │
+│  Border: 2px solid #3B82F6 (blue)                       │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│  DATE PICKER                                            │
+├─────────────────────────────────────────────────────────┤
+│  ┌─────────────────────────────────────┐                │
+│  │ 2026-02-25             📅 │ ← WHITE bg, BLACK text   │
+│  └─────────────────────────────────────┘                │
+│        ↓ (on click)                                     │
+│  ┌─────────────────────────────────────┐                │
+│  │  ◀  February 2026  ▶       │ ← WHITE bg, BLACK text  │
+│  │─────────────────────────────│                        │
+│  │ Sun Mon Tue Wed Thu Fri Sat│ ← BLACK text            │
+│  │  1   2   3   4   5   6   7 │ ← BLACK text            │
+│  │  8   9  10  11  12  13  14 │                         │
+│  │ 15  16  17  18  19  20  21 │                         │
+│  │ 22  23  24 [25] 26  27  28 │ ← [25] = BLUE bg, WHITE │
+│  └─────────────────────────────────────┘                │
+│  Border: 2px solid #3B82F6 (blue)                       │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -222,4 +362,4 @@ border: 1px solid #93C5FD;
 
 ---
 
-*Last Updated: 2026-02-18*
+*Last Updated: 2026-02-25*

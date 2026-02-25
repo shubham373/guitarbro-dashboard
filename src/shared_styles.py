@@ -302,47 +302,63 @@ def inject_custom_css():
     }
 
     /* ============================================ */
-    /* DATE PICKER: LIGHT BG, BLACK TEXT            */
+    /* DATE PICKER: ALL WHITE BG, ALL BLACK TEXT    */
     /* ============================================ */
 
-    /* Date input field - Light background, black text */
+    /* Date input field */
     [data-testid="stDateInput"] input {
         background-color: #FFFFFF !important;
         color: #000000 !important;
-        border: 1px solid #93C5FD !important;
+        border: 2px solid #3B82F6 !important;
+        border-radius: 8px !important;
     }
 
     [data-testid="stDateInput"] > div > div {
         background-color: #FFFFFF !important;
+        border: 2px solid #3B82F6 !important;
+        border-radius: 8px !important;
     }
 
-    /* Calendar popup container - Dark background needs WHITE text */
+    [data-testid="stDateInput"] svg {
+        fill: #000000 !important;
+    }
+
+    /* Calendar popup - WHITE background, BLACK text */
     [data-baseweb="calendar"] {
-        background-color: #1F2937 !important;
+        background-color: #FFFFFF !important;
+        border-radius: 8px !important;
     }
 
-    /* Calendar header (month/year) - WHITE text */
+    [data-baseweb="calendar"] * {
+        color: #000000 !important;
+        background-color: transparent !important;
+    }
+
+    /* Month/Year header */
     [data-baseweb="calendar"] [data-baseweb="typo-labellarge"],
     [data-baseweb="calendar"] [data-baseweb="typo-labelmedium"],
     [data-baseweb="calendar"] button {
-        color: #FFFFFF !important;
+        color: #000000 !important;
+        background-color: #FFFFFF !important;
     }
 
-    /* Calendar day names (Mon, Tue, etc.) - WHITE text */
+    /* Day names (Sun, Mon, Tue...) */
     [data-baseweb="calendar"] th {
-        color: #FFFFFF !important;
+        color: #000000 !important;
+        background-color: #FFFFFF !important;
     }
 
-    /* Calendar days - WHITE text on dark background */
+    /* Calendar days */
     [data-baseweb="calendar"] td {
-        color: #FFFFFF !important;
+        color: #000000 !important;
+        background-color: #FFFFFF !important;
     }
 
     [data-baseweb="calendar"] td div {
-        color: #FFFFFF !important;
+        color: #000000 !important;
     }
 
-    /* Selected day - Blue highlight, keep WHITE text */
+    /* Selected day - Blue background, WHITE text */
     [data-baseweb="calendar"] [aria-selected="true"] {
         background-color: #3B82F6 !important;
         color: #FFFFFF !important;
@@ -352,30 +368,38 @@ def inject_custom_css():
         color: #FFFFFF !important;
     }
 
-    /* Hover state on days */
-    [data-baseweb="calendar"] td:hover {
-        background-color: #374151 !important;
-    }
-
-    /* Calendar navigation arrows - WHITE */
-    [data-baseweb="calendar"] svg {
-        fill: #FFFFFF !important;
-        color: #FFFFFF !important;
-    }
-
-    /* Popover container for calendar */
-    [data-baseweb="popover"] {
-        background-color: #1F2937 !important;
-        border: 1px solid #374151 !important;
-    }
-
-    [data-baseweb="popover"] * {
-        color: #FFFFFF !important;
-    }
-
-    /* Override for selected day text specifically */
     [data-baseweb="calendar"] [aria-selected="true"] * {
         color: #FFFFFF !important;
+    }
+
+    /* Hover state */
+    [data-baseweb="calendar"] td:hover {
+        background-color: #DBEAFE !important;
+    }
+
+    /* Navigation arrows */
+    [data-baseweb="calendar"] svg {
+        fill: #000000 !important;
+        color: #000000 !important;
+    }
+
+    /* Popover containing calendar */
+    [data-baseweb="popover"]:has([data-baseweb="calendar"]) {
+        background-color: #FFFFFF !important;
+        border: 2px solid #3B82F6 !important;
+    }
+
+    [data-baseweb="popover"]:has([data-baseweb="calendar"]) > div {
+        background-color: #FFFFFF !important;
+    }
+
+    /* Month/Year dropdown in calendar */
+    [data-baseweb="calendar"] [data-baseweb="select"] {
+        background-color: #FFFFFF !important;
+    }
+
+    [data-baseweb="calendar"] [data-baseweb="select"] * {
+        color: #000000 !important;
     }
 
     /* ============================================ */
@@ -395,27 +419,171 @@ def inject_custom_css():
     }
 
     /* ============================================ */
-    /* MULTISELECT / SELECTBOX DROPDOWN             */
+    /* SELECTBOX / MULTISELECT DROPDOWNS            */
+    /* WHITE BG, BLACK TEXT, BOLD BORDERS           */
     /* ============================================ */
 
+    /* Main select container */
     [data-baseweb="select"] {
         background-color: #FFFFFF !important;
+        border: 2px solid #3B82F6 !important;
+        border-radius: 8px !important;
     }
 
-    [data-baseweb="select"] * {
+    /* Selected value text */
+    [data-baseweb="select"] > div {
+        background-color: #FFFFFF !important;
         color: #000000 !important;
     }
 
-    [data-baseweb="popover"] [role="listbox"] {
+    [data-baseweb="select"] span {
+        color: #000000 !important;
+    }
+
+    [data-baseweb="select"] input {
+        color: #000000 !important;
         background-color: #FFFFFF !important;
     }
 
-    [data-baseweb="popover"] [role="option"] {
+    /* Placeholder text */
+    [data-baseweb="select"] [data-baseweb="tag"] {
+        background-color: #DBEAFE !important;
         color: #000000 !important;
     }
 
-    [data-baseweb="popover"] [role="option"]:hover {
+    /* Dropdown arrow icon */
+    [data-baseweb="select"] svg {
+        fill: #000000 !important;
+        color: #000000 !important;
+    }
+
+    /* Dropdown menu container */
+    [data-baseweb="menu"] {
+        background-color: #FFFFFF !important;
+        border: 2px solid #3B82F6 !important;
+        border-radius: 8px !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+    }
+
+    /* Dropdown menu list */
+    [data-baseweb="menu"] ul {
+        background-color: #FFFFFF !important;
+    }
+
+    /* Dropdown menu items */
+    [data-baseweb="menu"] li {
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
+    }
+
+    [data-baseweb="menu"] li span {
+        color: #000000 !important;
+    }
+
+    [data-baseweb="menu"] li:hover {
         background-color: #DBEAFE !important;
+        color: #000000 !important;
+    }
+
+    /* Selected/highlighted option */
+    [data-baseweb="menu"] li[aria-selected="true"],
+    [data-baseweb="menu"] li[data-highlighted="true"] {
+        background-color: #DBEAFE !important;
+        color: #000000 !important;
+    }
+
+    /* Listbox (another menu variant) */
+    [role="listbox"] {
+        background-color: #FFFFFF !important;
+        border: 2px solid #3B82F6 !important;
+    }
+
+    [role="listbox"] [role="option"] {
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
+    }
+
+    [role="listbox"] [role="option"]:hover {
+        background-color: #DBEAFE !important;
+    }
+
+    [role="listbox"] [role="option"][aria-selected="true"] {
+        background-color: #DBEAFE !important;
+        color: #000000 !important;
+        font-weight: 600 !important;
+    }
+
+    /* Popover that contains dropdowns */
+    [data-baseweb="popover"] {
+        background-color: #FFFFFF !important;
+        border: 2px solid #3B82F6 !important;
+        border-radius: 8px !important;
+    }
+
+    [data-baseweb="popover"] > div {
+        background-color: #FFFFFF !important;
+    }
+
+    /* Ensure all text in popovers is black (except calendar which uses dark bg) */
+    [data-baseweb="popover"]:not(:has([data-baseweb="calendar"])) * {
+        color: #000000 !important;
+    }
+
+    /* Multiselect tags (selected items) */
+    [data-baseweb="tag"] {
+        background-color: #DBEAFE !important;
+        color: #000000 !important;
+        border: 1px solid #93C5FD !important;
+    }
+
+    [data-baseweb="tag"] span {
+        color: #000000 !important;
+    }
+
+    /* Clear/remove button in tags */
+    [data-baseweb="tag"] svg {
+        fill: #000000 !important;
+    }
+
+    /* Streamlit specific selectbox overrides */
+    .stSelectbox > div > div {
+        background-color: #FFFFFF !important;
+        border: 2px solid #3B82F6 !important;
+        border-radius: 8px !important;
+    }
+
+    .stSelectbox > div > div > div {
+        color: #000000 !important;
+    }
+
+    .stSelectbox [data-baseweb="select"] > div {
+        background-color: #FFFFFF !important;
+    }
+
+    /* Multiselect specific */
+    .stMultiSelect > div > div {
+        background-color: #FFFFFF !important;
+        border: 2px solid #3B82F6 !important;
+        border-radius: 8px !important;
+    }
+
+    .stMultiSelect [data-baseweb="select"] > div {
+        background-color: #FFFFFF !important;
+    }
+
+    /* Input text in select (for searchable dropdowns) */
+    [data-baseweb="input"] {
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
+    }
+
+    [data-baseweb="input"] input {
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
+    }
+
+    [data-baseweb="base-input"] {
+        background-color: #FFFFFF !important;
     }
 
     /* ============================================ */
