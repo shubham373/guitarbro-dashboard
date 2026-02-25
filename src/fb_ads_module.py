@@ -17,6 +17,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Tuple, Optional, List, Dict
 from ad_scaling_logic import get_ad_status
+from shared_styles import inject_custom_css
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -904,30 +905,31 @@ def render_summary_view(start_date: str, end_date: str, campaigns: list, ad_sets
   /* Container */
   .table-container {{
       max-height:70vh; overflow-y:auto; overflow-x:auto;
-      border-radius:8px; border:1px solid #374151;
+      border-radius:8px; border:1px solid #E5E7EB;
+      background:#FFFFFF;
   }}
-  /* Dark-theme scrollbar */
+  /* Light-theme scrollbar */
   .table-container::-webkit-scrollbar {{ width:8px; height:8px; }}
-  .table-container::-webkit-scrollbar-track {{ background:#111827; border-radius:4px; }}
-  .table-container::-webkit-scrollbar-thumb {{ background:#4B5563; border-radius:4px; }}
+  .table-container::-webkit-scrollbar-track {{ background:#F3F4F6; border-radius:4px; }}
+  .table-container::-webkit-scrollbar-thumb {{ background:#9CA3AF; border-radius:4px; }}
   .table-container::-webkit-scrollbar-thumb:hover {{ background:#6B7280; }}
-  .table-container {{ scrollbar-color:#4B5563 #111827; scrollbar-width:thin; }}
+  .table-container {{ scrollbar-color:#9CA3AF #F3F4F6; scrollbar-width:thin; }}
 
   /* Table */
-  .ad-table {{ width:100%; border-collapse:collapse; table-layout:fixed; }}
+  .ad-table {{ width:100%; border-collapse:collapse; table-layout:fixed; background:#FFFFFF; }}
   .ad-table thead {{ position:sticky; top:0; z-index:10; }}
   .ad-table thead th {{
-      background:#1F2937; color:#FFFFFF; padding:12px 8px; text-align:left;
+      background:#DBEAFE; color:#000000; padding:12px 8px; text-align:left;
       font-size:11px; font-weight:600; white-space:nowrap;
-      border-bottom:2px solid #528FF0;
-      box-shadow:0 2px 4px rgba(0,0,0,0.3);
+      border-bottom:2px solid #3B82F6;
   }}
   .ad-table tbody td {{
-      padding:12px 8px; border-bottom:1px solid #374151; color:#FFFFFF;
+      padding:12px 8px; border-bottom:1px solid #E5E7EB; color:#1A1A1A;
       font-size:12px; vertical-align:middle; line-height:1.4;
   }}
-  .ad-table tbody tr {{ background:#111827; }}
-  .ad-table tbody tr:nth-child(even) {{ background:#1F2937; }}
+  .ad-table tbody tr {{ background:#FFFFFF; }}
+  .ad-table tbody tr:nth-child(even) {{ background:#F9FAFB; }}
+  .ad-table tbody tr:hover {{ background:#F0F7FF; }}
   /* Ad Name & Reason: allow text wrap */
   .ad-table td:nth-child(1), .ad-table td:nth-child(9) {{ white-space:normal; word-break:break-word; }}
   /* Other columns: single-line */
@@ -1249,12 +1251,13 @@ def render_detail_view(ad_name: str):
 <head>
 <style>
   * {{ margin:0; padding:0; box-sizing:border-box; }}
-  html, body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: transparent; }}
-  table {{ width:100%; border-collapse:collapse; table-layout:fixed; }}
-  th {{ background:#1F2937; color:#FFFFFF; padding:6px 4px; text-align:left; font-size:11px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-  td {{ padding:6px 4px; border-bottom:1px solid #374151; color:#FFFFFF; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-  tr {{ background:#111827; }}
-  tr:nth-child(even) {{ background:#1F2937; }}
+  html, body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #FFFFFF; }}
+  table {{ width:100%; border-collapse:collapse; table-layout:fixed; background:#FFFFFF; }}
+  th {{ background:#DBEAFE; color:#000000; padding:6px 4px; text-align:left; font-size:11px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; border-bottom:2px solid #3B82F6; }}
+  td {{ padding:6px 4px; border-bottom:1px solid #E5E7EB; color:#1A1A1A; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+  tr {{ background:#FFFFFF; }}
+  tr:nth-child(even) {{ background:#F9FAFB; }}
+  tr:hover {{ background:#F0F7FF; }}
   th:last-child, td:last-child {{ text-align:right; }}
   /* Column widths */
   th:nth-child(1), td:nth-child(1) {{ width:72px; }}   /* Date */
@@ -1352,6 +1355,9 @@ def render_detail_view(ad_name: str):
 # =============================================================================
 def render_fb_ads_module():
     """Main entry point for the FB Ads module."""
+
+    # Apply shared CSS styles (including selectbox/dropdown styling)
+    inject_custom_css()
 
     # Initialize database
     init_fb_ads_db()
