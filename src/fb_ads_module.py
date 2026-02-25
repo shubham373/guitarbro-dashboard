@@ -739,9 +739,16 @@ def render_summary_view(start_date: str, end_date: str, campaigns: list, ad_sets
     # Load previous period data
     df_previous = load_fb_ads_data(prev_start_date, prev_end_date, campaigns if campaigns else None, ad_sets if ad_sets else None)
 
-    # Filter for ads with spend > 0
-    df_current_spend = df_current[df_current["Amount spent (INR)"].fillna(0) > 0]
-    df_previous_spend = df_previous[df_previous["Amount spent (INR)"].fillna(0) > 0]
+    # Filter for ads with spend > 0 (with defensive checks for empty DataFrames)
+    if not df_current.empty and "Amount spent (INR)" in df_current.columns:
+        df_current_spend = df_current[df_current["Amount spent (INR)"].fillna(0) > 0]
+    else:
+        df_current_spend = pd.DataFrame()
+
+    if not df_previous.empty and "Amount spent (INR)" in df_previous.columns:
+        df_previous_spend = df_previous[df_previous["Amount spent (INR)"].fillna(0) > 0]
+    else:
+        df_previous_spend = pd.DataFrame()
 
     # Calculate metrics for current period
     total_ads_current = df_current_spend["Ad name"].nunique() if not df_current_spend.empty else 0
