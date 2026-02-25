@@ -281,26 +281,45 @@ class FacebookAdsAPI:
 
         raise Exception(f"Max retries ({MAX_RETRIES}) exceeded")
 
-    def fetch_ad_insights(
-        self,
-        start_date: str,
-        end_date: str,
-        progress_callback: Optional[Callable[[str, float], None]] = None
-    ) -> List[Dict]:
+    def _generate_date_chunks(self, start_date: str, end_date: str, chunk_days: int = 30) -> List[Tuple[str, str]]:
         """
-        Fetch ad-level insights for a date range.
+        Split a date range into smaller chunks to avoid API limits.
 
         Args:
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
-            progress_callback: Optional callback(message, progress_pct)
+            chunk_days: Maximum days per chunk (default 30)
 
         Returns:
-            List of insight dictionaries
+            List of (chunk_start, chunk_end) tuples
         """
-        if progress_callback:
-            progress_callback("Connecting to Facebook Ads API...", 0.1)
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
 
+        chunks = []
+        current_start = start_dt
+
+        while current_start <= end_dt:
+            current_end = min(current_start + timedelta(days=chunk_days - 1), end_dt)
+            chunks.append((
+                current_start.strftime('%Y-%m-%d'),
+                current_end.strftime('%Y-%m-%d')
+            ))
+            current_start = current_end + timedelta(days=1)
+
+        return chunks
+
+    def _fetch_chunk(self, start_date: str, end_date: str) -> List[Dict]:
+        """
+        Fetch insights for a single date chunk.
+
+        Args:
+            start_date: Chunk start date
+            end_date: Chunk end date
+
+        Returns:
+            List of insight dictionaries for this chunk
+        """
         all_insights = []
 
         params = {
@@ -313,25 +332,13 @@ class FacebookAdsAPI:
 
         endpoint = f"/{self.ad_account_id}/insights"
 
-        if progress_callback:
-            progress_callback(f"Fetching insights for {start_date} to {end_date}...", 0.2)
-
         # Initial request
         response = self._make_request(endpoint, params)
         insights = response.get('data', [])
         all_insights.extend(insights)
 
-        logger.info(f"Fetched {len(insights)} insights (batch 1)")
-
-        # Handle pagination
-        batch = 1
+        # Handle pagination within chunk
         while 'paging' in response and 'next' in response['paging']:
-            batch += 1
-
-            if progress_callback:
-                progress_callback(f"Fetching batch {batch}...", min(0.2 + (batch * 0.1), 0.8))
-
-            # Get cursor from paging
             cursors = response.get('paging', {}).get('cursors', {})
             after = cursors.get('after')
 
@@ -346,13 +353,78 @@ class FacebookAdsAPI:
                 break
 
             all_insights.extend(insights)
-            logger.info(f"Fetched {len(insights)} insights (batch {batch})")
 
-        if progress_callback:
-            progress_callback(f"Fetched {len(all_insights)} total records", 0.9)
-
-        logger.info(f"Total insights fetched: {len(all_insights)}")
         return all_insights
+
+    def fetch_ad_insights(
+        self,
+        start_date: str,
+        end_date: str,
+        progress_callback: Optional[Callable[[str, float], None]] = None
+    ) -> List[Dict]:
+        """
+        Fetch ad-level insights for a date range.
+        Automatically chunks large date ranges to avoid API limits.
+
+        Args:
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+            progress_callback: Optional callback(message, progress_pct)
+
+        Returns:
+            List of insight dictionaries
+        """
+        if progress_callback:
+            progress_callback("Connecting to Facebook Ads API...", 0.05)
+
+        # Calculate date range
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+        total_days = (end_dt - start_dt).days + 1
+
+        # For large ranges (>30 days), split into monthly chunks
+        if total_days > 30:
+            chunks = self._generate_date_chunks(start_date, end_date, chunk_days=30)
+            logger.info(f"Large date range ({total_days} days), splitting into {len(chunks)} chunks")
+
+            if progress_callback:
+                progress_callback(f"Fetching {total_days} days in {len(chunks)} monthly batches...", 0.1)
+
+            all_insights = []
+
+            for i, (chunk_start, chunk_end) in enumerate(chunks):
+                progress_pct = 0.1 + (0.8 * (i / len(chunks)))
+
+                if progress_callback:
+                    progress_callback(f"Fetching {chunk_start} to {chunk_end} ({i+1}/{len(chunks)})...", progress_pct)
+
+                try:
+                    chunk_insights = self._fetch_chunk(chunk_start, chunk_end)
+                    all_insights.extend(chunk_insights)
+                    logger.info(f"Chunk {i+1}/{len(chunks)}: {len(chunk_insights)} records ({chunk_start} to {chunk_end})")
+                except Exception as e:
+                    logger.error(f"Error fetching chunk {chunk_start} to {chunk_end}: {e}")
+                    # Continue with other chunks even if one fails
+                    continue
+
+            if progress_callback:
+                progress_callback(f"Fetched {len(all_insights)} total records", 0.9)
+
+            logger.info(f"Total insights fetched: {len(all_insights)}")
+            return all_insights
+
+        else:
+            # Small date range - fetch in single request
+            if progress_callback:
+                progress_callback(f"Fetching insights for {start_date} to {end_date}...", 0.2)
+
+            all_insights = self._fetch_chunk(start_date, end_date)
+
+            if progress_callback:
+                progress_callback(f"Fetched {len(all_insights)} total records", 0.9)
+
+            logger.info(f"Total insights fetched: {len(all_insights)}")
+            return all_insights
 
 
 # =============================================================================
