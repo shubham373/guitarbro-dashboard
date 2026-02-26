@@ -739,7 +739,7 @@ def render_summary_view(start_date: str, end_date: str, campaigns: list, ad_sets
     # Load previous period data
     df_previous = load_fb_ads_data(prev_start_date, prev_end_date, campaigns if campaigns else None, ad_sets if ad_sets else None)
 
-    # Filter for ads with spend > 0 (with defensive checks for empty DataFrames)
+    # Filter for ads with spend > 0 (for the ad performance table)
     if not df_current.empty and "Amount spent (INR)" in df_current.columns:
         df_current_spend = df_current[df_current["Amount spent (INR)"].fillna(0) > 0]
     else:
@@ -751,16 +751,28 @@ def render_summary_view(start_date: str, end_date: str, campaigns: list, ad_sets
         df_previous_spend = pd.DataFrame()
 
     # Calculate metrics for current period
-    total_ads_current = df_current_spend["Ad name"].nunique() if not df_current_spend.empty else 0
-    total_spend_current = df_current_spend["Amount spent (INR)"].sum() if not df_current_spend.empty else 0
-    total_purchases_current = df_current_spend["Purchases"].sum() if not df_current_spend.empty else 0
-    avg_roas_current = calculate_true_roas(df_current_spend)
+    # Total Ads Live = only ads with "Ad delivery" status = "Active" (case-insensitive)
+    if not df_current.empty and "Ad delivery" in df_current.columns:
+        df_active_ads = df_current[df_current["Ad delivery"].fillna("").str.lower().str.contains("active")]
+        total_ads_current = df_active_ads["Ad name"].nunique() if not df_active_ads.empty else 0
+    else:
+        total_ads_current = df_current["Ad name"].nunique() if not df_current.empty else 0
 
-    # Calculate metrics for previous period
-    total_ads_previous = df_previous_spend["Ad name"].nunique() if not df_previous_spend.empty else 0
-    total_spend_previous = df_previous_spend["Amount spent (INR)"].sum() if not df_previous_spend.empty else 0
-    total_purchases_previous = df_previous_spend["Purchases"].sum() if not df_previous_spend.empty else 0
-    avg_roas_previous = calculate_true_roas(df_previous_spend)
+    # Total Spend, Purchases, ROAS = from ALL ads in period (active + inactive)
+    total_spend_current = df_current["Amount spent (INR)"].fillna(0).sum() if not df_current.empty and "Amount spent (INR)" in df_current.columns else 0
+    total_purchases_current = df_current["Purchases"].fillna(0).sum() if not df_current.empty and "Purchases" in df_current.columns else 0
+    avg_roas_current = calculate_true_roas(df_current) if not df_current.empty else 0
+
+    # Calculate metrics for previous period (same logic)
+    if not df_previous.empty and "Ad delivery" in df_previous.columns:
+        df_previous_active = df_previous[df_previous["Ad delivery"].fillna("").str.lower().str.contains("active")]
+        total_ads_previous = df_previous_active["Ad name"].nunique() if not df_previous_active.empty else 0
+    else:
+        total_ads_previous = df_previous["Ad name"].nunique() if not df_previous.empty else 0
+
+    total_spend_previous = df_previous["Amount spent (INR)"].fillna(0).sum() if not df_previous.empty and "Amount spent (INR)" in df_previous.columns else 0
+    total_purchases_previous = df_previous["Purchases"].fillna(0).sum() if not df_previous.empty and "Purchases" in df_previous.columns else 0
+    avg_roas_previous = calculate_true_roas(df_previous) if not df_previous.empty else 0
 
     # Render metric cards
     render_section_header("Performance Overview")
