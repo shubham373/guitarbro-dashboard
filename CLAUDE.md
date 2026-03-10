@@ -804,6 +804,9 @@ Ad Account
 - [x] Update `logistics_db.py` to use absolute paths
 - [x] Migrate existing SQLite data to Supabase (9,534 orders)
 - [x] Test matching engine with Supabase backend
+- [x] Add pagination to all Supabase queries (fixes 1000 row limit)
+- [x] Fix Prozo upsert to use AWB as conflict key (prevents duplicates)
+- [x] Calendar-based date filters (Today, Yesterday, This Month, Last Month, Custom)
 
 **FB Ads Module**: ⚠️ Partial - NEEDS COMPLETION
 - [x] Create `supabase_fb_ads_db.py` helper
