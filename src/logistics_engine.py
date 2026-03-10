@@ -215,11 +215,12 @@ def _get_unified_orders_filtered(
 
     if USE_SUPABASE:
         # Build Supabase filters
+        # Note: order_date uses space separator (YYYY-MM-DD HH:MM:SS), not T
         filters = {}
         if start_date:
-            filters['order_date_from'] = f"{start_date}T00:00:00"
+            filters['order_date_from'] = f"{start_date} 00:00:00"
         if end_date:
-            filters['order_date_to'] = f"{end_date}T23:59:59"
+            filters['order_date_to'] = f"{end_date} 23:59:59"
         if delivery_status:
             filters['delivery_status'] = delivery_status
         if payment_mode:
