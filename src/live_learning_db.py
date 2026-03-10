@@ -14,6 +14,7 @@ import sqlite3
 import json
 import logging
 import re
+import os
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -21,12 +22,16 @@ from typing import Dict, Any, List, Optional, Tuple
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Database path (same as logistics module)
-DB_PATH = "data/logistics.db"
+# Database path - use absolute path to avoid cwd issues
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_current_dir)
+DB_PATH = os.path.join(_project_root, "data", "logistics.db")
 
 
 def get_db_connection():
     """Get a connection to the database."""
+    # Ensure data directory exists
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
