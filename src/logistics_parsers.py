@@ -756,7 +756,7 @@ def parse_prozo_csv(file_or_path) -> Dict[str, Any]:
         """, (batch_id, 'prozo', 'uploaded_file', len(df), records_new, records_updated, records_failed))
 
         conn.commit()
-    conn.close()
+        conn.close()
 
     return {
         'success': True,
