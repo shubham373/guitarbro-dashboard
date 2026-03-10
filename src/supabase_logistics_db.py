@@ -64,25 +64,42 @@ def insert_shopify_orders(orders: List[Dict[str, Any]], batch_id: str) -> int:
 
 
 def get_shopify_orders(filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    """Get Shopify orders with optional filters."""
+    """Get Shopify orders with optional filters. Handles pagination for large datasets."""
     client = get_supabase_client()
     if not client:
         return []
 
     try:
-        query = client.table('raw_shopify_orders').select('*')
+        all_orders = []
+        batch_size = 1000
+        offset = 0
 
-        if filters:
-            if filters.get('order_date_from'):
-                query = query.gte('order_date', filters['order_date_from'])
-            if filters.get('order_date_to'):
-                query = query.lte('order_date', filters['order_date_to'])
-            if filters.get('payment_method'):
-                query = query.eq('payment_method', filters['payment_method'])
+        while True:
+            query = client.table('raw_shopify_orders').select('*')
 
-        query = query.order('order_date', desc=True)
-        result = query.execute()
-        return result.data
+            if filters:
+                if filters.get('order_date_from'):
+                    query = query.gte('order_date', filters['order_date_from'])
+                if filters.get('order_date_to'):
+                    query = query.lte('order_date', filters['order_date_to'])
+                if filters.get('payment_method'):
+                    query = query.eq('payment_method', filters['payment_method'])
+
+            query = query.order('order_date', desc=True)
+            query = query.range(offset, offset + batch_size - 1)
+            result = query.execute()
+
+            if not result.data:
+                break
+
+            all_orders.extend(result.data)
+
+            if len(result.data) < batch_size:
+                break
+
+            offset += batch_size
+
+        return all_orders
     except Exception as e:
         logger.error(f"Error fetching Shopify orders: {e}")
         return []
@@ -155,7 +172,7 @@ def clear_line_items() -> bool:
 # =============================================================================
 
 def insert_prozo_orders(orders: List[Dict[str, Any]], batch_id: str) -> int:
-    """Insert multiple Prozo orders."""
+    """Insert/upsert multiple Prozo orders. Uses AWB as unique key."""
     client = get_supabase_client()
     if not client or not orders:
         return 0
@@ -164,31 +181,51 @@ def insert_prozo_orders(orders: List[Dict[str, Any]], batch_id: str) -> int:
         for order in orders:
             order['import_batch_id'] = batch_id
 
-        client.table('raw_prozo_orders').insert(orders).execute()
-        logger.info(f"Inserted {len(orders)} Prozo orders")
+        # Use upsert with AWB as conflict key to avoid duplicates
+        client.table('raw_prozo_orders').upsert(
+            orders, on_conflict='awb'
+        ).execute()
+        logger.info(f"Upserted {len(orders)} Prozo orders")
         return len(orders)
     except Exception as e:
-        logger.error(f"Error inserting Prozo orders: {e}")
+        logger.error(f"Error upserting Prozo orders: {e}")
         return 0
 
 
 def get_prozo_orders(filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    """Get Prozo orders with optional filters."""
+    """Get Prozo orders with optional filters. Handles pagination for large datasets."""
     client = get_supabase_client()
     if not client:
         return []
 
     try:
-        query = client.table('raw_prozo_orders').select('*')
+        all_orders = []
+        batch_size = 1000
+        offset = 0
 
-        if filters:
-            if filters.get('status'):
-                query = query.eq('status', filters['status'])
-            if filters.get('order_id'):
-                query = query.eq('order_id', filters['order_id'])
+        while True:
+            query = client.table('raw_prozo_orders').select('*')
 
-        result = query.execute()
-        return result.data
+            if filters:
+                if filters.get('status'):
+                    query = query.eq('status', filters['status'])
+                if filters.get('order_id'):
+                    query = query.eq('order_id', filters['order_id'])
+
+            query = query.range(offset, offset + batch_size - 1)
+            result = query.execute()
+
+            if not result.data:
+                break
+
+            all_orders.extend(result.data)
+
+            if len(result.data) < batch_size:
+                break
+
+            offset += batch_size
+
+        return all_orders
     except Exception as e:
         logger.error(f"Error fetching Prozo orders: {e}")
         return []
@@ -234,27 +271,44 @@ def upsert_unified_orders(orders: List[Dict[str, Any]]) -> int:
 
 
 def get_unified_orders(filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    """Get unified orders with filters."""
+    """Get unified orders with filters. Handles pagination for large datasets."""
     client = get_supabase_client()
     if not client:
         return []
 
     try:
-        query = client.table('unified_orders').select('*')
+        all_orders = []
+        batch_size = 1000
+        offset = 0
 
-        if filters:
-            if filters.get('order_date_from'):
-                query = query.gte('order_date', filters['order_date_from'])
-            if filters.get('order_date_to'):
-                query = query.lte('order_date', filters['order_date_to'])
-            if filters.get('delivery_status'):
-                query = query.eq('delivery_status', filters['delivery_status'])
-            if filters.get('payment_mode'):
-                query = query.eq('payment_mode', filters['payment_mode'])
+        while True:
+            query = client.table('unified_orders').select('*')
 
-        query = query.order('order_date', desc=True)
-        result = query.execute()
-        return result.data
+            if filters:
+                if filters.get('order_date_from'):
+                    query = query.gte('order_date', filters['order_date_from'])
+                if filters.get('order_date_to'):
+                    query = query.lte('order_date', filters['order_date_to'])
+                if filters.get('delivery_status'):
+                    query = query.eq('delivery_status', filters['delivery_status'])
+                if filters.get('payment_mode'):
+                    query = query.eq('payment_mode', filters['payment_mode'])
+
+            query = query.order('order_date', desc=True)
+            query = query.range(offset, offset + batch_size - 1)
+            result = query.execute()
+
+            if not result.data:
+                break
+
+            all_orders.extend(result.data)
+
+            if len(result.data) < batch_size:
+                break
+
+            offset += batch_size
+
+        return all_orders
     except Exception as e:
         logger.error(f"Error fetching unified orders: {e}")
         return []
