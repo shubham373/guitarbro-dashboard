@@ -28,7 +28,10 @@ import sqlite3
 import os
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
 from typing import Optional, Dict, List, Any, Tuple
 
 # Import shared styles
@@ -68,6 +71,7 @@ try:
         get_active_tracked_posts as supabase_get_active_tracked_posts,
         get_stats as supabase_get_stats,
         get_unique_ad_names as supabase_get_unique_ad_names,
+        get_instagram_comments_debug as supabase_get_instagram_comments_debug,
     )
 
     # Check if Supabase is actually connected
@@ -300,6 +304,12 @@ def init_comment_bot_db():
     except sqlite3.OperationalError:
         pass  # Column already exists
 
+    # Add ig_permalink column if not exists (for Instagram links)
+    try:
+        cursor.execute("ALTER TABLE fb_comments ADD COLUMN ig_permalink TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
     # Create indexes for frequently queried columns
     indexes = [
         "CREATE INDEX IF NOT EXISTS idx_comments_post_id ON fb_comments(fb_post_id)",
@@ -361,7 +371,7 @@ def insert_comment(comment_dict: Dict[str, Any]) -> int:
         'post_type', 'campaign_name', 'ad_set_name', 'ad_name',
         'commenter_name', 'commenter_fb_id', 'comment_text', 'comment_time',
         'category', 'sentiment', 'confidence', 'claude_reasoning',
-        'language_detected', 'reply_text', 'reply_status', 'platform'
+        'language_detected', 'reply_text', 'reply_status', 'platform', 'ig_permalink'
     ]
 
     present_fields = [f for f in fields if f in comment_dict]
@@ -545,7 +555,7 @@ def get_parent_comments(filters: Optional[Dict[str, Any]] = None) -> List[Dict[s
     Query only parent comments (thread_depth = 0 or parent_comment_id is NULL).
 
     Args:
-        filters: Same filters as get_comments()
+        filters: Same filters as get_comments() plus date_from, date_to
 
     Returns:
         List of parent comment dictionaries
@@ -575,7 +585,7 @@ def get_parent_comments(filters: Optional[Dict[str, Any]] = None) -> List[Dict[s
             params.append(str(filters['date_from']))
 
         if filters.get('date_to'):
-            query += " AND comment_time <= ?"
+            query += " AND comment_time < ?"
             params.append(str(filters['date_to']))
 
         if filters.get('ad_name'):
@@ -1537,10 +1547,41 @@ def render_overview_tab():
 
                 if result['success']:
                     st.success(result['message'])
-                    if result.get('instagram_comments', 0) > 0:
-                        st.info(f"Instagram: {result['instagram_comments']} comments")
+                    # Show detailed breakdown
+                    col_a, col_b, col_c = st.columns(3)
+                    with col_a:
+                        st.metric("Ads Checked", result.get('ads_checked', 0))
+                    with col_b:
+                        st.metric("FB Comments (New)", result.get('comments_new', 0) - result.get('instagram_comments', 0))
+                    with col_c:
+                        st.metric("IG Comments (New)", result.get('instagram_comments', 0))
+
+                    # Show IG API details
+                    ig_from_api = result.get('ig_comments_from_api', 0)
+                    ig_skipped = result.get('ig_comments_skipped_existing', 0)
+                    if ig_from_api > 0 or ig_skipped > 0:
+                        st.info(f"📷 Instagram API returned {ig_from_api} comments total ({ig_skipped} already in DB)")
+                    elif result.get('ads_with_ig', 0) > 0:
+                        st.warning(f"📷 {result.get('ads_with_ig', 0)} ads have IG placements but API returned 0 comments")
+                    else:
+                        st.warning("⚠️ No ads have Instagram media IDs")
+
                     if result['total_cost_inr'] > 0:
                         st.info(f"Claude cost: ₹{result['total_cost_inr']:.2f}")
+
+                    # Debug: Show Instagram comments in DB
+                    if USE_SUPABASE:
+                        with st.expander("🔍 Debug: Instagram comments in DB"):
+                            try:
+                                ig_comments = supabase_get_instagram_comments_debug()
+                                if ig_comments:
+                                    for c in ig_comments:
+                                        st.markdown(f"**@{c.get('commenter_name')}** - `{(c.get('comment_text') or '')[:50]}...`")
+                                        st.caption(f"Ad: {(c.get('ad_name') or 'N/A')[:40]} | thread_depth: {c.get('thread_depth')} | time: {c.get('comment_time')}")
+                                else:
+                                    st.warning("No Instagram comments found in database")
+                            except Exception as e:
+                                st.error(f"Error: {e}")
                 else:
                     st.error(result['message'])
                     for err in result.get('errors', [])[:3]:
@@ -1549,6 +1590,105 @@ def render_overview_tab():
                 st.error("Fetcher module not available")
 
     st.markdown("<br>", unsafe_allow_html=True)
+
+    # DEBUG: Ads API Inspection
+    with st.expander("🔧 Debug: Ads API Inspection"):
+        st.markdown("""
+        <p style='color: #1A1A1A; margin-bottom: 12px;'>
+        Use this to see exactly what the Facebook Ads API returns at each step.
+        This helps identify where ads are being filtered out.
+        </p>
+        """, unsafe_allow_html=True)
+
+        if st.button("🔍 Debug Ads API", key="debug_ads_api"):
+            with st.spinner("Fetching detailed API data..."):
+                try:
+                    from comment_fetcher import debug_ads_api
+                    debug_result = debug_ads_api()
+
+                    # Show summary first
+                    st.markdown("### Summary")
+                    summary = debug_result['summary']
+                    cols = st.columns(5)
+                    with cols[0]:
+                        st.metric("Insights Rows", summary['total_from_insights'])
+                    with cols[1]:
+                        st.metric("Spend > 0", summary['with_spend_gt_0'])
+                    with cols[2]:
+                        st.metric("Creative Fetched", summary['creative_fetched'])
+                    with cols[3]:
+                        st.metric("FB Comments", summary['final_for_fb_comments'])
+                    with cols[4]:
+                        st.metric("With IG Media", summary['final_with_ig_media'])
+
+                    # Show errors
+                    if debug_result['errors']:
+                        st.error("**Errors:**")
+                        for err in debug_result['errors']:
+                            st.warning(err)
+
+                    # Step 1: Insights API
+                    st.markdown("### Step 1: Insights API (ads with delivery)")
+                    step1 = debug_result['step1_insights_api']
+                    st.caption(f"Time range: {step1['request'].get('time_range', 'N/A')}")
+                    st.caption(f"Total rows returned: {step1['response'].get('total_rows', 0)}")
+
+                    if step1['ads_with_spend']:
+                        df1 = pd.DataFrame(step1['ads_with_spend'])
+                        df1 = df1.sort_values('spend', ascending=False)
+                        st.dataframe(df1, use_container_width=True, height=200)
+                    else:
+                        st.warning("No ads with spend > 0")
+
+                    # Step 2: Creative Details
+                    st.markdown("### Step 2: Creative Details")
+                    step2 = debug_result['step2_creative_details']
+
+                    if step2['ads_by_status']:
+                        st.markdown("**Ads by effective_status:**")
+                        status_text = ", ".join([f"{k}: {v}" for k, v in step2['ads_by_status'].items()])
+                        st.caption(status_text)
+
+                    if step2['ads_fetched']:
+                        df2 = pd.DataFrame(step2['ads_fetched'])
+                        st.dataframe(df2, use_container_width=True, height=250)
+                    else:
+                        st.warning("No creative details fetched")
+
+                    # Step 3: Filtering
+                    st.markdown("### Step 3: Filtering Results")
+                    step3 = debug_result['step3_filtering']
+
+                    st.caption(f"Your Page ID: `{step3['page_id']}`")
+
+                    col_a, col_b, col_c = st.columns(3)
+                    with col_a:
+                        skipped = len(step3['ads_skipped_wrong_page'])
+                        st.metric("Skipped (wrong page)", skipped, delta_color="inverse" if skipped > 0 else "off")
+                    with col_b:
+                        no_post = len(step3['ads_no_post_id'])
+                        st.metric("No FB Post ID", no_post, delta_color="inverse" if no_post > 0 else "off")
+                    with col_c:
+                        no_ig = len(step3['ads_no_ig_media_id'])
+                        st.metric("No IG Media ID", no_ig)
+
+                    if step3['ads_skipped_wrong_page']:
+                        st.markdown("**Ads on different pages (FB comments skipped):**")
+                        for ad in step3['ads_skipped_wrong_page'][:5]:
+                            st.caption(f"• {ad['ad_name']} - Page: `{ad['post_page_id']}` (yours: `{ad['your_page_id']}`) - IG: {'✓' if ad['has_ig_media'] else '✗'}")
+
+                    # Final ads for comments
+                    st.markdown("### Final: Ads to check for comments")
+                    if step3['final_ads_for_comments']:
+                        df3 = pd.DataFrame(step3['final_ads_for_comments'])
+                        st.dataframe(df3, use_container_width=True, height=200)
+                    else:
+                        st.error("No ads available for comment fetching!")
+
+                except ImportError as e:
+                    st.error(f"Could not import debug function: {e}")
+                except Exception as e:
+                    st.error(f"Debug error: {e}")
 
     # Stats section
     stats = get_stats()
@@ -1580,44 +1720,20 @@ def render_overview_tab():
     with col4:
         render_metric_card(f"{stats['total_api_tokens']:,}", "Tokens Used", "all time", "gray")
 
-    # Category breakdown chart
-    st.markdown("<br>", unsafe_allow_html=True)
-    render_section_header("Category Breakdown")
-
-    if stats['category_breakdown']:
-        df_cat = pd.DataFrame([
-            {'Category': k or 'Uncategorized', 'Count': v}
-            for k, v in stats['category_breakdown'].items()
-        ])
-        st.bar_chart(df_cat.set_index('Category'))
-    else:
-        st.info("No comments categorized yet")
-
-    # Sentiment breakdown
-    render_section_header("Sentiment Breakdown")
-
-    if stats['sentiment_breakdown']:
-        df_sent = pd.DataFrame([
-            {'Sentiment': k or 'Unknown', 'Count': v}
-            for k, v in stats['sentiment_breakdown'].items()
-        ])
-        st.bar_chart(df_sent.set_index('Sentiment'))
-    else:
-        st.info("No sentiment data yet")
 
 
 def render_comments_tab():
     """Render the comments review tab."""
     render_section_header("Comment Review Queue")
 
-    # Filters
-    col1, col2, col3, col4 = st.columns(4)
+    # Filters - Row 1: Status, Category, Ad Name
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         status_filter = st.selectbox(
             "Reply Status",
             ["all", "pending", "approved", "sent", "skipped", "failed"],
-            index=1  # Default to pending
+            index=0  # Default to all
         )
 
     with col2:
@@ -1630,7 +1746,26 @@ def render_comments_tab():
         ad_names = get_unique_ad_names()
         ad_filter = st.selectbox("Ad Name", ["all"] + ad_names)
 
-    with col4:
+    # Filters - Row 2: Date Range and Search
+    col1, col2, col3 = st.columns([1, 1, 2])
+
+    with col1:
+        # Date filter - From
+        date_from = st.date_input(
+            "From Date",
+            value=datetime.now() - timedelta(days=7),
+            key='comments_date_from'
+        )
+
+    with col2:
+        # Date filter - To
+        date_to = st.date_input(
+            "To Date",
+            value=datetime.now(),
+            key='comments_date_to'
+        )
+
+    with col3:
         search_text = st.text_input("Search comments", placeholder="keyword...")
 
     # Build filters
@@ -1643,31 +1778,49 @@ def render_comments_tab():
         filters['ad_name'] = ad_filter
     if search_text:
         filters['search_text'] = search_text
+    if date_from:
+        # Convert IST date to UTC for database query (IST is UTC+5:30)
+        # Start of day in IST = previous day 18:30 UTC
+        date_from_utc = datetime.combine(date_from, datetime.min.time()) - timedelta(hours=5, minutes=30)
+        filters['date_from'] = date_from_utc.strftime('%Y-%m-%dT%H:%M:%S+00:00')
+    if date_to:
+        # End of day in IST = current day 18:30 UTC
+        date_to_utc = datetime.combine(date_to + timedelta(days=1), datetime.min.time()) - timedelta(hours=5, minutes=30)
+        filters['date_to'] = date_to_utc.strftime('%Y-%m-%dT%H:%M:%S+00:00')
 
     # Get parent comments only (not replies)
     comments = get_parent_comments(filters)
+
+    # Debug: Show what filters are being applied
+    with st.expander("🔍 Debug: Query Info"):
+        # Show date range in IST for clarity
+        st.write(f"**Date range (IST):** {date_from.strftime('%d %b %Y')} 12:00 AM to {(date_to + timedelta(days=1)).strftime('%d %b %Y')} 12:00 AM")
+        st.write(f"**Comments returned:** {len(comments)}")
+        if comments:
+            # Show platform breakdown
+            fb_count = len([c for c in comments if c.get('platform', 'facebook') == 'facebook'])
+            ig_count = len([c for c in comments if c.get('platform') == 'instagram'])
+            st.write(f"**Facebook:** {fb_count}, **Instagram:** {ig_count}")
+
+        # Also get ALL comments without filters to compare
+        if USE_SUPABASE:
+            all_comments = supabase_get_instagram_comments_debug()
+            st.write(f"**Total IG comments in DB (no filter):** {len(all_comments)}")
 
     if not comments:
         st.info("No comments found matching the filters")
         return
 
-    st.markdown(f"<p style='color: #1A1A1A; font-weight: 600; margin: 16px 0; background-color: #F0F7FF; padding: 10px; border-radius: 8px;'>📊 Showing {len(comments)} parent comments</p>", unsafe_allow_html=True)
+    # Show total count
+    st.markdown(f"""
+    <div style='background-color: #F0F7FF; padding: 12px 16px; border-radius: 8px; margin: 16px 0; border-left: 4px solid #3B82F6;'>
+        <span style='color: #1A1A1A; font-weight: 600; font-size: 16px;'>📊 Total: {len(comments)} comments</span>
+        <span style='color: #6B7280; font-size: 14px; margin-left: 12px;'>({date_from.strftime('%d %b')} - {date_to.strftime('%d %b %Y')})</span>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # Debug: Show raw data in a simple table first
-    if len(comments) > 0:
-        import pandas as pd
-        df_preview = pd.DataFrame([{
-            'Name': c.get('commenter_name', 'Unknown'),
-            'Comment': (c.get('comment_text', '') or '')[:50] + '...',
-            'Category': c.get('category', '-'),
-            'Status': c.get('reply_status', '-')
-        } for c in comments[:10]])
-        st.dataframe(df_preview, use_container_width=True, hide_index=True)
-
-        st.markdown("<hr style='border-color: #E5E7EB; margin: 20px 0;'>", unsafe_allow_html=True)
-
-    # Display parent comments with their threads
-    for comment in comments[:50]:  # Limit to 50 for performance
+    # Display parent comments with their threads (one by one)
+    for comment in comments[:100]:  # Limit to 100 for performance
         render_comment_card(comment, show_thread=True)
 
 
@@ -1763,8 +1916,17 @@ def render_comment_card(comment: Dict[str, Any], show_thread: bool = False):
         # Ad info with clickable link
         if comment.get('ad_name'):
             fb_post_id = comment.get('fb_post_id', '')
+            platform = comment.get('platform', 'facebook')
             ad_link = ""
-            if fb_post_id and not fb_post_id.startswith('ig_'):
+            link_text = "View on Facebook"
+
+            if platform == 'instagram' or fb_post_id.startswith('ig_'):
+                # Instagram - use stored permalink if available
+                ig_permalink = comment.get('ig_permalink', '')
+                if ig_permalink:
+                    ad_link = ig_permalink
+                    link_text = "View on Instagram"
+            elif fb_post_id:
                 # Construct Facebook post URL
                 # Format: page_id_post_id or just post_id
                 if '_' in fb_post_id:
@@ -1772,12 +1934,9 @@ def render_comment_card(comment: Dict[str, Any], show_thread: bool = False):
                     ad_link = f"https://www.facebook.com/{page_id}/posts/{post_id}"
                 else:
                     ad_link = f"https://www.facebook.com/{fb_post_id}"
-            elif fb_post_id:
-                # Instagram media
-                ad_link = f"https://www.instagram.com/p/{fb_post_id}/"
 
             if ad_link:
-                st.markdown(f"<span style='color: #6B7280 !important; font-size: 13px;'>📢 Ad: {comment['ad_name']} · <a href='{ad_link}' target='_blank' style='color: #3B82F6 !important;'>View on Facebook ↗</a></span>", unsafe_allow_html=True)
+                st.markdown(f"<span style='color: #6B7280 !important; font-size: 13px;'>📢 Ad: {comment['ad_name']} · <a href='{ad_link}' target='_blank' style='color: #3B82F6 !important;'>{link_text} ↗</a></span>", unsafe_allow_html=True)
             else:
                 st.markdown(f"<span style='color: #6B7280 !important; font-size: 13px;'>📢 Ad: {comment['ad_name']}</span>", unsafe_allow_html=True)
 
@@ -1889,7 +2048,11 @@ def render_commenters_tab():
             ["Total Comments", "Recent Activity", "Price Objections"]
         )
 
-    histories = get_all_commenter_histories(limit=100)
+    try:
+        histories = get_all_commenter_histories(limit=100)
+    except Exception as e:
+        st.error(f"Error loading commenter histories: {e}")
+        return
 
     # Apply filters
     if filter_type == "Repeat Objectors":
@@ -1906,58 +2069,44 @@ def render_commenters_tab():
     st.markdown(f"<p style='color: #1A1A1A; font-weight: 600;'>{len(histories)} commenters</p>", unsafe_allow_html=True)
 
     for h in histories:
-        with st.expander(f"👤 {h['commenter_name']} ({h['total_comments']} comments)"):
-            st.markdown(f"""
-            <div style="display: flex; gap: 24px; flex-wrap: wrap; padding: 12px 0;">
-                <div style="flex: 1; min-width: 150px;">
-                    <p style="color: #1A1A1A; font-weight: 600; margin-bottom: 12px;">Stats</p>
-                    <div style="background-color: #F0F7FF; padding: 12px; border-radius: 8px; margin-bottom: 8px;">
-                        <span style="color: #528FF0; font-size: 24px; font-weight: 700;">{h['total_comments']}</span>
-                        <span style="color: #6B7280; font-size: 13px; display: block;">Total Comments</span>
-                    </div>
-                    <div style="background-color: #F9FAFB; padding: 12px; border-radius: 8px;">
-                        <span style="color: #1A1A1A; font-size: 24px; font-weight: 700;">{h['unique_ads_count']}</span>
-                        <span style="color: #6B7280; font-size: 13px; display: block;">Unique Ads</span>
-                    </div>
-                </div>
-                <div style="flex: 1; min-width: 200px;">
-                    <p style="color: #1A1A1A; font-weight: 600; margin-bottom: 12px;">Category Counts</p>
-            """, unsafe_allow_html=True)
+        try:
+            commenter_name = h.get('commenter_name', 'Unknown')
+            total_comments = h.get('total_comments', 0)
+            unique_ads_count = h.get('unique_ads_count', 0)
 
-            # Category counts
-            for cat, label, emoji in COMMENT_CATEGORIES:
-                count = h.get(f'{cat}_count', 0)
-                if count > 0:
-                    st.markdown(f"<div style='color: #1A1A1A; padding: 4px 0;'>{emoji} {label}: <strong>{count}</strong></div>", unsafe_allow_html=True)
+            with st.expander(f"👤 {commenter_name} ({total_comments} comments)"):
+                col1, col2, col3 = st.columns(3)
 
-            st.markdown("""
-                </div>
-                <div style="flex: 1; min-width: 150px;">
-                    <p style="color: #1A1A1A; font-weight: 600; margin-bottom: 12px;">Flags</p>
-            """, unsafe_allow_html=True)
+                with col1:
+                    st.markdown("<p style='color: #1A1A1A; font-weight: 600;'>Stats</p>", unsafe_allow_html=True)
+                    st.metric("Total Comments", total_comments)
+                    st.metric("Unique Ads", unique_ads_count)
 
-            # Flags
-            has_flags = False
-            if h.get('is_repeat_objector'):
-                st.markdown("<div style='background-color: #FEE2E2; color: #991B1B; padding: 6px 10px; border-radius: 4px; margin-bottom: 6px; display: inline-block;'>🔴 Repeat Objector</div>", unsafe_allow_html=True)
-                has_flags = True
-            if h.get('is_potential_customer'):
-                st.markdown("<div style='background-color: #D1FAE5; color: #065F46; padding: 6px 10px; border-radius: 4px; margin-bottom: 6px; display: inline-block;'>🟢 Potential Customer</div>", unsafe_allow_html=True)
-                has_flags = True
-            if h.get('is_troll'):
-                st.markdown("<div style='background-color: #FEF3C7; color: #92400E; padding: 6px 10px; border-radius: 4px; margin-bottom: 6px; display: inline-block;'>⚠️ Possible Troll</div>", unsafe_allow_html=True)
-                has_flags = True
-            if not has_flags:
-                st.markdown("<span style='color: #9CA3AF;'>No flags</span>", unsafe_allow_html=True)
+                with col2:
+                    st.markdown("<p style='color: #1A1A1A; font-weight: 600;'>Category Counts</p>", unsafe_allow_html=True)
+                    for cat, label, emoji in COMMENT_CATEGORIES:
+                        count = h.get(f'{cat}_count', 0) or 0
+                        if count > 0:
+                            st.markdown(f"{emoji} {label}: **{count}**")
 
-            st.markdown("</div></div>", unsafe_allow_html=True)
+                with col3:
+                    st.markdown("<p style='color: #1A1A1A; font-weight: 600;'>Flags</p>", unsafe_allow_html=True)
+                    has_flags = False
+                    if h.get('is_repeat_objector'):
+                        st.markdown("🔴 Repeat Objector")
+                        has_flags = True
+                    if h.get('is_potential_customer'):
+                        st.markdown("🟢 Potential Customer")
+                        has_flags = True
+                    if h.get('is_troll'):
+                        st.markdown("⚠️ Possible Troll")
+                        has_flags = True
+                    if not has_flags:
+                        st.markdown("No flags")
 
-            # Timestamps
-            st.markdown(f"""
-            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #E5E7EB;">
-                <span style="color: #6B7280; font-size: 13px;">First seen: {format_datetime(h.get('first_comment_at'))} · Last seen: {format_datetime(h.get('last_comment_at'))}</span>
-            </div>
-            """, unsafe_allow_html=True)
+                st.markdown(f"**First seen:** {format_datetime(h.get('first_comment_at'))} · **Last seen:** {format_datetime(h.get('last_comment_at'))}")
+        except Exception as e:
+            st.warning(f"Error rendering commenter: {e}")
 
 
 def render_settings_tab():

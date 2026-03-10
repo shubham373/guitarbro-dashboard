@@ -606,6 +606,18 @@ def format_comment_for_storage(
     from_data = comment.get('from', {})
     parent = comment.get('parent', {})
 
+    # Get commenter name - Facebook may not return this for privacy reasons
+    commenter_name = from_data.get('name', '')
+    commenter_id = from_data.get('id', '')
+
+    # If name is empty but we have an ID, use a truncated ID as fallback
+    if not commenter_name:
+        if commenter_id:
+            # Use last 6 chars of ID for privacy-friendly display
+            commenter_name = f"User_{commenter_id[-6:]}"
+        else:
+            commenter_name = 'Unknown User'
+
     return {
         'fb_comment_id': comment.get('id'),
         'parent_comment_id': parent.get('id') if parent else None,
@@ -615,8 +627,8 @@ def format_comment_for_storage(
         'campaign_name': campaign_name,
         'ad_set_name': ad_set_name,
         'ad_name': ad_name,
-        'commenter_name': from_data.get('name', 'Unknown'),
-        'commenter_fb_id': from_data.get('id'),
+        'commenter_name': commenter_name,
+        'commenter_fb_id': commenter_id,
         'comment_text': comment.get('message', ''),
         'comment_time': comment.get('created_time'),
         'reply_status': 'pending'

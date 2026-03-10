@@ -74,3 +74,14 @@ def get_shopify_store_url() -> str:
 def get_shopify_access_token() -> str:
     """Get Shopify Admin API access token"""
     return get_secret('SHOPIFY_ACCESS_TOKEN', '')
+
+
+# Prozo/Proship API Configuration
+def get_prozo_email() -> str:
+    """Get Prozo login email"""
+    return get_secret('PROZO_EMAIL', '')
+
+
+def get_prozo_password() -> str:
+    """Get Prozo login password"""
+    return get_secret('PROZO_PASSWORD', '')

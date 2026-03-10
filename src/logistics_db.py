@@ -19,8 +19,10 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Database path
-DB_PATH = "data/logistics.db"
+# Database path - use absolute path to avoid cwd issues
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_current_dir)
+DB_PATH = os.path.join(_project_root, "data", "logistics.db")
 
 # =============================================================================
 # DATABASE BACKEND SELECTION
@@ -66,7 +68,8 @@ except ImportError as e:
 
 def get_db_connection() -> sqlite3.Connection:
     """Get SQLite connection with row factory."""
-    os.makedirs("data", exist_ok=True)
+    # Ensure data directory exists (using absolute path)
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn

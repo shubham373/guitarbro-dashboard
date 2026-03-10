@@ -174,9 +174,9 @@ def get_parent_comments(filters: Optional[Dict[str, Any]] = None) -> List[Dict[s
     try:
         query = client.table('fb_comments').select('*')
 
-        # Filter for parent comments only
+        # Filter for parent comments only (thread_depth = 0 or null)
+        # Using a simpler approach - just filter by thread_depth
         query = query.or_('thread_depth.eq.0,thread_depth.is.null')
-        query = query.or_('parent_comment_id.eq.,parent_comment_id.is.null')
 
         if filters:
             if filters.get('reply_status'):
@@ -187,12 +187,36 @@ def get_parent_comments(filters: Optional[Dict[str, Any]] = None) -> List[Dict[s
                 query = query.eq('ad_name', filters['ad_name'])
             if filters.get('search_text'):
                 query = query.ilike('comment_text', f"%{filters['search_text']}%")
+            if filters.get('date_from'):
+                logger.info(f"Filtering date_from: {filters['date_from']}")
+                query = query.gte('comment_time', filters['date_from'])
+            if filters.get('date_to'):
+                logger.info(f"Filtering date_to: {filters['date_to']}")
+                query = query.lt('comment_time', filters['date_to'])
 
         query = query.order('comment_time', desc=True)
         result = query.execute()
+        logger.info(f"get_parent_comments returned {len(result.data)} comments")
         return result.data
     except Exception as e:
         logger.error(f"Error fetching parent comments: {e}")
+        return []
+
+
+def get_instagram_comments_debug() -> List[Dict[str, Any]]:
+    """Debug function to get all Instagram comments."""
+    client = get_supabase_client()
+    if not client:
+        return []
+
+    try:
+        result = client.table('fb_comments').select('fb_comment_id,commenter_name,comment_text,ad_name,platform,thread_depth,parent_comment_id,comment_time').eq('platform', 'instagram').order('comment_time', desc=True).limit(20).execute()
+        logger.info(f"Found {len(result.data)} Instagram comments in DB")
+        for c in result.data:
+            logger.info(f"  IG: @{c.get('commenter_name')} - thread_depth={c.get('thread_depth')}, parent={c.get('parent_comment_id')}")
+        return result.data
+    except Exception as e:
+        logger.error(f"Error fetching Instagram comments: {e}")
         return []
 
 
@@ -413,7 +437,41 @@ def get_all_commenter_histories(limit: int = 100) -> List[Dict[str, Any]]:
         result = client.table('fb_commenter_history').select('*').order(
             'total_comments', desc=True
         ).limit(limit).execute()
-        return result.data
+
+        # Parse JSON fields and ensure proper format
+        histories = []
+        for row in result.data:
+            history = dict(row)
+            # Ensure ads_commented_on is a list
+            ads = history.get('ads_commented_on', [])
+            if isinstance(ads, str):
+                try:
+                    import json
+                    history['ads_commented_on'] = json.loads(ads)
+                except:
+                    history['ads_commented_on'] = []
+            elif ads is None:
+                history['ads_commented_on'] = []
+
+            # Ensure languages_used is a list
+            langs = history.get('languages_used', [])
+            if isinstance(langs, str):
+                try:
+                    import json
+                    history['languages_used'] = json.loads(langs)
+                except:
+                    history['languages_used'] = []
+            elif langs is None:
+                history['languages_used'] = []
+
+            # Ensure counts default to 0
+            for cat in ['price_objection', 'doubt', 'product_question', 'negative', 'positive', 'complaint', 'other']:
+                if history.get(f'{cat}_count') is None:
+                    history[f'{cat}_count'] = 0
+
+            histories.append(history)
+
+        return histories
     except Exception as e:
         logger.error(f"Error fetching all histories: {e}")
         return []

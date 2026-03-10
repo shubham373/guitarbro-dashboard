@@ -9,8 +9,11 @@ This module connects:
 
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Tuple
+
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
 
 # Import config helper for secrets
 try:
@@ -227,6 +230,10 @@ def get_active_ad_posts() -> Tuple[List[Dict[str, Any]], Optional[str]]:
             post_id = creative.get('object_story_id') or creative.get('effective_object_story_id')
             ig_media_id = creative.get('effective_instagram_media_id')
 
+            # Log creative info for debugging
+            ad_name = ad.get('name', 'Unknown')
+            logger.info(f"Ad '{ad_name[:40]}': post_id={post_id}, ig_media_id={ig_media_id}")
+
             # Skip posts from pages we don't have access to
             if post_id:
                 post_page_id = post_id.split('_')[0]
@@ -260,11 +267,231 @@ def get_active_ad_posts() -> Tuple[List[Dict[str, Any]], Optional[str]]:
                 seen_ig_media_ids.add(ig_media_id)
                 ad_posts.append(ad_info)
 
-        logger.info(f"Found {len(ad_posts)} unique posts from {len(ads)} active ads ({len(seen_ig_media_ids)} with IG)")
+        logger.info(f"Found {len(ad_posts)} unique posts from {len(ads)} ads with delivery ({len(seen_ig_media_ids)} with IG)")
         return ad_posts, None
 
     except Exception as e:
         return [], f"Error fetching active ads: {str(e)}"
+
+
+# =============================================================================
+# DEBUG: DETAILED ADS API INSPECTION
+# =============================================================================
+
+def debug_ads_api() -> Dict[str, Any]:
+    """
+    Debug function that shows step-by-step what the Facebook Ads API returns.
+    Use this to identify where ads might be missing.
+
+    Returns detailed info at each step:
+    1. Insights API raw response
+    2. Ads with spend > 0
+    3. Creative details for each ad
+    4. Final filtered results (what gets checked for comments)
+    """
+    import requests
+    import json
+
+    user_token = get_secret('FACEBOOK_USER_ACCESS_TOKEN')
+    ad_account_id = get_secret('FACEBOOK_AD_ACCOUNT_ID')
+    page_id = get_secret('FACEBOOK_PAGE_ID')
+
+    result = {
+        'step1_insights_api': {
+            'request': {},
+            'response': {},
+            'ads_with_spend': []
+        },
+        'step2_creative_details': {
+            'request': {},
+            'ads_fetched': [],
+            'ads_by_status': {}
+        },
+        'step3_filtering': {
+            'page_id': page_id,
+            'ads_skipped_wrong_page': [],
+            'ads_no_post_id': [],
+            'ads_no_ig_media_id': [],
+            'final_ads_for_comments': []
+        },
+        'summary': {
+            'total_from_insights': 0,
+            'with_spend_gt_0': 0,
+            'creative_fetched': 0,
+            'final_for_fb_comments': 0,
+            'final_with_ig_media': 0
+        },
+        'errors': []
+    }
+
+    if not user_token or not ad_account_id:
+        result['errors'].append("FACEBOOK_USER_ACCESS_TOKEN or FACEBOOK_AD_ACCOUNT_ID not set")
+        return result
+
+    try:
+        # STEP 1: Insights API
+        today = datetime.now().strftime('%Y-%m-%d')
+        seven_days_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+
+        insights_url = f"https://graph.facebook.com/v21.0/{ad_account_id}/insights"
+        insights_params = {
+            'level': 'ad',
+            'fields': 'ad_id,ad_name,spend,impressions,reach',
+            'time_range': json.dumps({'since': seven_days_ago, 'until': today}),
+            'limit': 500,
+            'access_token': user_token
+        }
+
+        result['step1_insights_api']['request'] = {
+            'url': insights_url,
+            'time_range': f"{seven_days_ago} to {today}",
+            'level': 'ad'
+        }
+
+        insights_resp = requests.get(insights_url, params=insights_params)
+        insights_data = insights_resp.json()
+
+        if 'error' in insights_data:
+            result['errors'].append(f"Insights API error: {insights_data['error'].get('message')}")
+            return result
+
+        all_insights = insights_data.get('data', [])
+        result['step1_insights_api']['response']['total_rows'] = len(all_insights)
+        result['summary']['total_from_insights'] = len(all_insights)
+
+        # Filter ads with spend > 0
+        ads_with_delivery = {}
+        for insight in all_insights:
+            spend = float(insight.get('spend', 0))
+            ad_id = insight.get('ad_id')
+            ad_name = insight.get('ad_name', 'Unknown')
+
+            if spend > 0:
+                ads_with_delivery[ad_id] = {
+                    'ad_id': ad_id,
+                    'ad_name': ad_name,
+                    'spend': spend,
+                    'impressions': insight.get('impressions', 0),
+                    'reach': insight.get('reach', 0)
+                }
+                result['step1_insights_api']['ads_with_spend'].append({
+                    'ad_id': ad_id,
+                    'ad_name': ad_name[:50],
+                    'spend': spend
+                })
+
+        result['summary']['with_spend_gt_0'] = len(ads_with_delivery)
+
+        if not ads_with_delivery:
+            result['errors'].append("No ads with spend > 0 in the last 7 days")
+            return result
+
+        # STEP 2: Get creative details
+        ad_ids = list(ads_with_delivery.keys())
+
+        for i in range(0, len(ad_ids), 50):
+            batch_ids = ad_ids[i:i+50]
+            url = f"https://graph.facebook.com/v21.0/"
+            params = {
+                'ids': ','.join(batch_ids),
+                'fields': 'id,name,status,effective_status,creative{object_story_id,effective_object_story_id,effective_instagram_media_id}',
+                'access_token': user_token
+            }
+
+            resp = requests.get(url, params=params)
+            data = resp.json()
+
+            if 'error' in data:
+                result['errors'].append(f"Creative fetch error: {data['error'].get('message')}")
+                continue
+
+            for ad_id, ad_data in data.items():
+                if isinstance(ad_data, dict) and 'id' in ad_data:
+                    creative = ad_data.get('creative', {})
+                    post_id = creative.get('object_story_id') or creative.get('effective_object_story_id')
+                    ig_media_id = creative.get('effective_instagram_media_id')
+                    effective_status = ad_data.get('effective_status', 'UNKNOWN')
+
+                    ad_info = {
+                        'ad_id': ad_id,
+                        'ad_name': ad_data.get('name', '')[:50],
+                        'status': ad_data.get('status'),
+                        'effective_status': effective_status,
+                        'post_id': post_id,
+                        'ig_media_id': ig_media_id,
+                        'post_page_id': post_id.split('_')[0] if post_id else None
+                    }
+                    result['step2_creative_details']['ads_fetched'].append(ad_info)
+
+                    # Track by status
+                    if effective_status not in result['step2_creative_details']['ads_by_status']:
+                        result['step2_creative_details']['ads_by_status'][effective_status] = 0
+                    result['step2_creative_details']['ads_by_status'][effective_status] += 1
+
+        result['summary']['creative_fetched'] = len(result['step2_creative_details']['ads_fetched'])
+
+        # STEP 3: Filtering
+        final_ads = []
+
+        for ad in result['step2_creative_details']['ads_fetched']:
+            post_id = ad['post_id']
+            ig_media_id = ad['ig_media_id']
+            post_page_id = ad['post_page_id']
+
+            # Check if post is from a different page
+            if post_id and post_page_id != page_id:
+                result['step3_filtering']['ads_skipped_wrong_page'].append({
+                    'ad_name': ad['ad_name'],
+                    'post_page_id': post_page_id,
+                    'your_page_id': page_id,
+                    'has_ig_media': bool(ig_media_id)
+                })
+                # Still add to final if has IG media
+                if ig_media_id:
+                    final_ads.append({
+                        'ad_name': ad['ad_name'],
+                        'post_id': None,  # Skip FB
+                        'ig_media_id': ig_media_id,
+                        'reason': 'FB skipped (wrong page), IG available'
+                    })
+                continue
+
+            if not post_id:
+                result['step3_filtering']['ads_no_post_id'].append({
+                    'ad_name': ad['ad_name'],
+                    'has_ig_media': bool(ig_media_id)
+                })
+                if ig_media_id:
+                    final_ads.append({
+                        'ad_name': ad['ad_name'],
+                        'post_id': None,
+                        'ig_media_id': ig_media_id,
+                        'reason': 'No FB post, IG only'
+                    })
+                continue
+
+            final_ads.append({
+                'ad_name': ad['ad_name'],
+                'post_id': post_id,
+                'ig_media_id': ig_media_id,
+                'reason': 'Full access'
+            })
+
+            if not ig_media_id:
+                result['step3_filtering']['ads_no_ig_media_id'].append({
+                    'ad_name': ad['ad_name'],
+                    'has_fb_post': bool(post_id)
+                })
+
+        result['step3_filtering']['final_ads_for_comments'] = final_ads
+        result['summary']['final_for_fb_comments'] = len([a for a in final_ads if a['post_id']])
+        result['summary']['final_with_ig_media'] = len([a for a in final_ads if a['ig_media_id']])
+
+        return result
+
+    except Exception as e:
+        result['errors'].append(f"Exception: {str(e)}")
+        return result
 
 
 # =============================================================================
@@ -324,6 +551,16 @@ def _fetch_ig_comments_for_media(
     ig_username = _get_ig_business_username()
 
     try:
+        # First, get the permalink for this media
+        media_url = f"https://graph.facebook.com/v21.0/{ig_media_id}"
+        media_params = {
+            'fields': 'permalink',
+            'access_token': user_token
+        }
+        media_resp = requests.get(media_url, params=media_params)
+        media_data = media_resp.json()
+        ig_permalink = media_data.get('permalink', '')
+
         # Fetch comments with replies field to get thread info
         url = f"https://graph.facebook.com/v21.0/{ig_media_id}/comments"
         params = {
@@ -339,40 +576,53 @@ def _fetch_ig_comments_for_media(
 
         comments = data.get('data', [])
         result = []
+        logger.info(f"IG API returned {len(comments)} total comments for media {ig_media_id}")
 
         for comment in comments:
             username = comment.get('username', '')
+            comment_text_preview = (comment.get('text', '') or '')[:50]
+            timestamp_str = comment.get('timestamp', '')
 
             # Skip if this comment is from our own Instagram account
             if ig_username and username.lower() == ig_username.lower():
+                logger.info(f"Skipping own comment from @{username}")
                 continue
 
-            # Filter by date if specified
-            timestamp_str = comment.get('timestamp', '')
+            # Filter by date if specified (using timezone-aware comparison)
             if timestamp_str and since:
                 try:
                     comment_time = datetime.fromisoformat(timestamp_str.replace('+0000', '+00:00').replace('Z', '+00:00'))
-                    if comment_time.replace(tzinfo=None) < since:
+                    # Ensure both are timezone-aware for proper comparison
+                    if comment_time.tzinfo is None:
+                        comment_time = comment_time.replace(tzinfo=timezone.utc)
+                    since_utc = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+                    if comment_time < since_utc:
+                        logger.info(f"Skipping old comment from @{username} (time: {comment_time.isoformat()}, since: {since_utc.isoformat()})")
                         continue  # Skip old comments
                 except Exception as e:
                     logger.warning(f"Error parsing IG timestamp {timestamp_str}: {e}")
 
+            logger.info(f"Including IG comment: @{username} - '{comment_text_preview}...' at {timestamp_str}")
+
             ig_comment_id = f"ig_{comment.get('id')}"
 
-            # Add parent comment
+            # Add parent comment - use username or ID-based fallback
+            display_name = username if username else f"IG_User_{comment.get('id', '')[-6:]}"
+
             comment_data = {
                 'fb_comment_id': ig_comment_id,
                 'fb_post_id': f"ig_{ig_media_id}",
                 'comment_text': comment.get('text', ''),
-                'commenter_name': username or 'Unknown',
-                'commenter_fb_id': username,  # Instagram uses username
+                'commenter_name': display_name,
+                'commenter_fb_id': username or comment.get('id', ''),  # Instagram uses username
                 'comment_time': timestamp_str,
                 'post_type': 'instagram_ad',
                 'ad_name': ad_name or 'Instagram Ad',
                 'ad_id': ad_id,
                 'platform': 'instagram',
                 'parent_comment_id': None,
-                'thread_depth': 0
+                'thread_depth': 0,
+                'ig_permalink': ig_permalink  # Store the Instagram permalink
             }
             result.append(comment_data)
 
@@ -386,28 +636,35 @@ def _fetch_ig_comments_for_media(
                     continue
 
                 reply_timestamp = reply.get('timestamp', '')
-                # Filter replies by date too
+                # Filter replies by date too (using timezone-aware comparison)
                 if reply_timestamp and since:
                     try:
                         reply_time = datetime.fromisoformat(reply_timestamp.replace('+0000', '+00:00').replace('Z', '+00:00'))
-                        if reply_time.replace(tzinfo=None) < since:
+                        if reply_time.tzinfo is None:
+                            reply_time = reply_time.replace(tzinfo=timezone.utc)
+                        since_utc = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+                        if reply_time < since_utc:
                             continue
                     except Exception:
                         pass
+
+                # Use username or ID-based fallback for replies
+                reply_display_name = reply_username if reply_username else f"IG_User_{reply.get('id', '')[-6:]}"
 
                 reply_data = {
                     'fb_comment_id': f"ig_{reply.get('id')}",
                     'fb_post_id': f"ig_{ig_media_id}",
                     'comment_text': reply.get('text', ''),
-                    'commenter_name': reply_username or 'Unknown',
-                    'commenter_fb_id': reply_username,
+                    'commenter_name': reply_display_name,
+                    'commenter_fb_id': reply_username or reply.get('id', ''),
                     'comment_time': reply_timestamp,
                     'post_type': 'instagram_ad',
                     'ad_name': ad_name or 'Instagram Ad',
                     'ad_id': ad_id,
                     'platform': 'instagram',
                     'parent_comment_id': ig_comment_id,
-                    'thread_depth': 1
+                    'thread_depth': 1,
+                    'ig_permalink': ig_permalink  # Store the Instagram permalink
                 }
                 result.append(reply_data)
 
@@ -638,10 +895,14 @@ def fetch_and_process_comments(
     result = {
         "success": False,
         "posts_checked": 0,
+        "ads_checked": 0,
+        "ads_with_ig": 0,
         "comments_fetched": 0,
         "comments_new": 0,
         "comments_classified": 0,
         "instagram_comments": 0,
+        "ig_comments_from_api": 0,
+        "ig_comments_skipped_existing": 0,
         "total_cost_inr": 0.0,
         "errors": [],
         "message": ""
@@ -669,7 +930,9 @@ def fetch_and_process_comments(
         update_progress("Connecting to Facebook...", 0.1)
         api = FacebookAPI()
 
-        comments_since_date = datetime.now() - timedelta(hours=hours_back)
+        # Use UTC for consistent comparison with API timestamps
+        comments_since_date = datetime.now(timezone.utc) - timedelta(hours=hours_back)
+        logger.info(f"Fetching comments since: {comments_since_date.isoformat()} (UTC)")
 
         # Determine which posts to check
         if fetch_from_ads:
@@ -691,13 +954,19 @@ def fetch_and_process_comments(
             post_info = [{'post_id': p.get('id'), 'ad_name': None, 'ad_id': None} for p in posts]
 
         result["posts_checked"] = len(post_info)
+        result["ads_checked"] = len(post_info)
+
+        # Count how many ads have Instagram placements
+        ads_with_ig = [p for p in post_info if p.get('ig_media_id')]
+        result["ads_with_ig"] = len(ads_with_ig)
+        logger.info(f"Ads with Instagram media ID: {len(ads_with_ig)} out of {len(post_info)}")
 
         if not post_info:
             result["success"] = True
             result["message"] = "No posts/ads found to check"
             return result
 
-        update_progress(f"Found {len(post_info)} ad posts, fetching comments...", 0.2)
+        update_progress(f"Found {len(post_info)} ads ({len(ads_with_ig)} with IG), fetching comments...", 0.2)
 
         # Get classifier if needed
         classifier = None
@@ -821,19 +1090,27 @@ def fetch_and_process_comments(
                 # Fetch INSTAGRAM comments if ad has IG placement
                 ig_media_id = info.get('ig_media_id')
                 if ig_media_id and fetch_instagram:
+                    logger.info(f"Fetching IG comments for ad '{ad_name}' (ig_media_id: {ig_media_id})")
                     ig_comments = _fetch_ig_comments_for_media(
                         ig_media_id=ig_media_id,
                         ad_name=ad_name,
                         ad_id=ad_id,
                         since=comments_since_date
                     )
+                    logger.info(f"Got {len(ig_comments)} IG comments from API for ad '{ad_name}'")
+                    result["ig_comments_from_api"] += len(ig_comments)
+                    ig_existing_count = 0
                     for ig_comment in ig_comments:
                         existing = get_comment_by_id(ig_comment['fb_comment_id'])
                         if existing:
+                            ig_existing_count += 1
                             continue
                         all_new_comments.append(ig_comment)
                         result["comments_new"] += 1
                         result["instagram_comments"] += 1
+                    result["ig_comments_skipped_existing"] += ig_existing_count
+                    if ig_existing_count > 0:
+                        logger.info(f"Skipped {ig_existing_count} IG comments (already in DB) for ad '{ad_name}'")
 
             except FacebookAPIError as e:
                 logger.error(f"Error fetching comments for post {post_id}: {e}")

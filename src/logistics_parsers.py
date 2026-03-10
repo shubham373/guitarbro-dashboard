@@ -2,18 +2,61 @@
 Logistics Reconciliation - CSV Parsers
 
 Handles parsing and importing Shopify and Prozo CSV files.
+
+Database Backend:
+- Primary: Supabase (cloud, persistent)
+- Fallback: SQLite (local, ephemeral on Streamlit Cloud)
 """
 
 import pandas as pd
 import re
 import uuid
+import logging
 from datetime import datetime
 from typing import Tuple, Optional, Dict, Any, List
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# =============================================================================
+# DATABASE BACKEND SELECTION
+# =============================================================================
+
+USE_SUPABASE = False
+
+try:
+    from supabase_logistics_db import (
+        check_logistics_supabase_connection,
+        insert_shopify_orders as supabase_insert_shopify_orders,
+        insert_line_items as supabase_insert_line_items,
+        insert_prozo_orders as supabase_insert_prozo_orders,
+        log_import as supabase_log_import,
+        get_delivery_status_mapping as supabase_get_delivery_status_mapping,
+    )
+
+    # Check if Supabase is connected
+    conn_status = check_logistics_supabase_connection()
+    if conn_status.get('connected'):
+        USE_SUPABASE = True
+        logger.info("Logistics Parsers: Using Supabase database backend")
+    else:
+        logger.warning(f"Logistics Parsers: Supabase not connected: {conn_status.get('error')}. Using SQLite.")
+except ImportError as e:
+    logger.warning(f"Logistics Parsers: Supabase module not available: {e}. Using SQLite.")
+
+# Import SQLite fallback
 from logistics_db import (
     get_db_connection,
-    get_delivery_status_mapping
+    get_delivery_status_mapping as sqlite_get_delivery_status_mapping
 )
+
+
+def get_delivery_status_mapping() -> Dict[str, Dict]:
+    """Get delivery status mapping from appropriate backend."""
+    if USE_SUPABASE:
+        return supabase_get_delivery_status_mapping()
+    return sqlite_get_delivery_status_mapping()
 
 
 # =============================================================================
@@ -260,9 +303,6 @@ def parse_shopify_csv(file_or_path) -> Dict[str, Any]:
             'records_failed': 0
         }
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
     # Group by order_id to handle multiple line items
     df['_order_id_normalized'] = df[col_map['order_id']].apply(normalize_order_id)
 
@@ -319,102 +359,143 @@ def parse_shopify_csv(file_or_path) -> Dict[str, Any]:
         orders_data[order_id]['lineitem_names'].append(lineitem['lineitem_name'] or '')
         orders_data[order_id]['total_quantity'] += lineitem['lineitem_quantity'] or 0
 
-    # Process aggregated orders
-    records_new = 0
-    records_updated = 0
-    records_failed = 0
-
+    # Finalize aggregated fields for all orders
     for order_id, order in orders_data.items():
-        # Finalize aggregated fields
         order['lineitem_names'] = ', '.join(filter(None, order['lineitem_names']))
         order['payment_method'] = classify_payment_method(
             order['financial_status'],
             order['payment_method_raw']
         )
 
-        try:
-            # Check if order exists
-            cursor.execute("SELECT id FROM raw_shopify_orders WHERE order_id = ?", (order_id,))
-            existing = cursor.fetchone()
+    # Process based on database backend
+    records_new = 0
+    records_updated = 0
+    records_failed = 0
 
-            if existing:
-                # Update existing
-                cursor.execute("""
-                    UPDATE raw_shopify_orders SET
-                        shopify_id = ?, email = ?, phone = ?, billing_phone = ?,
-                        billing_name = ?, shipping_name = ?, shipping_city = ?,
-                        shipping_state = ?, shipping_pincode = ?, subtotal = ?,
-                        total = ?, discount_code = ?, discount_amount = ?,
-                        refunded_amount = ?, financial_status = ?, fulfillment_status = ?,
-                        payment_method_raw = ?, payment_method = ?, lineitem_names = ?,
-                        total_quantity = ?, order_date = ?, cancelled_at = ?,
-                        source = ?, tags = ?, uploaded_at = CURRENT_TIMESTAMP,
-                        import_batch_id = ?
-                    WHERE order_id = ?
-                """, (
-                    order['shopify_id'], order['email'], order['phone'], order['billing_phone'],
-                    order['billing_name'], order['shipping_name'], order['shipping_city'],
-                    order['shipping_state'], order['shipping_pincode'], order['subtotal'],
-                    order['total'], order['discount_code'], order['discount_amount'],
-                    order['refunded_amount'], order['financial_status'], order['fulfillment_status'],
-                    order['payment_method_raw'], order['payment_method'], order['lineitem_names'],
-                    order['total_quantity'], order['order_date'], order['cancelled_at'],
-                    order['source'], order['tags'], batch_id, order_id
-                ))
-                records_updated += 1
-            else:
-                # Insert new
-                cursor.execute("""
-                    INSERT INTO raw_shopify_orders (
-                        order_id, shopify_id, email, phone, billing_phone,
-                        billing_name, shipping_name, shipping_city, shipping_state,
-                        shipping_pincode, subtotal, total, discount_code, discount_amount,
-                        refunded_amount, financial_status, fulfillment_status,
-                        payment_method_raw, payment_method, lineitem_names, total_quantity,
-                        order_date, cancelled_at, source, tags, import_batch_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    order['order_id'], order['shopify_id'], order['email'], order['phone'],
-                    order['billing_phone'], order['billing_name'], order['shipping_name'],
-                    order['shipping_city'], order['shipping_state'], order['shipping_pincode'],
-                    order['subtotal'], order['total'], order['discount_code'], order['discount_amount'],
-                    order['refunded_amount'], order['financial_status'], order['fulfillment_status'],
-                    order['payment_method_raw'], order['payment_method'], order['lineitem_names'],
-                    order['total_quantity'], order['order_date'], order['cancelled_at'],
-                    order['source'], order['tags'], batch_id
-                ))
-                records_new += 1
+    if USE_SUPABASE:
+        # =====================================================
+        # SUPABASE BACKEND
+        # =====================================================
+        try:
+            # Prepare orders list for Supabase upsert
+            orders_list = list(orders_data.values())
+
+            # Insert/upsert orders to Supabase
+            inserted_count = supabase_insert_shopify_orders(orders_list, batch_id)
+            records_new = inserted_count  # Supabase upsert counts all as "new"
+            logger.info(f"Supabase: Inserted {inserted_count} Shopify orders")
+
+            # Insert line items
+            if line_items_data:
+                line_items_inserted = supabase_insert_line_items(line_items_data)
+                logger.info(f"Supabase: Inserted {line_items_inserted} line items")
+
+            # Log import
+            supabase_log_import(
+                batch_id=batch_id,
+                source='shopify',
+                file_name='uploaded_file',
+                records_total=len(orders_data),
+                records_new=records_new,
+                records_updated=records_updated,
+                records_failed=records_failed
+            )
 
         except Exception as e:
-            records_failed += 1
-            print(f"Error processing order {order_id}: {e}")
+            logger.error(f"Supabase error: {e}")
+            records_failed = len(orders_data)
 
-    # Insert line items (clear existing first for this batch)
-    order_ids = list(orders_data.keys())
-    if order_ids:
-        placeholders = ','.join(['?' for _ in order_ids])
-        cursor.execute(f"DELETE FROM order_line_items WHERE order_id IN ({placeholders})", order_ids)
+    else:
+        # =====================================================
+        # SQLITE BACKEND (fallback)
+        # =====================================================
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-        for item in line_items_data:
-            if item['order_id'] in orders_data:
-                cursor.execute("""
-                    INSERT INTO order_line_items (
-                        order_id, lineitem_name, lineitem_sku,
-                        lineitem_quantity, lineitem_price, lineitem_discount
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    item['order_id'], item['lineitem_name'], item['lineitem_sku'],
-                    item['lineitem_quantity'], item['lineitem_price'], item['lineitem_discount']
-                ))
+        for order_id, order in orders_data.items():
+            try:
+                # Check if order exists
+                cursor.execute("SELECT id FROM raw_shopify_orders WHERE order_id = ?", (order_id,))
+                existing = cursor.fetchone()
 
-    # Log import
-    cursor.execute("""
-        INSERT INTO import_log (batch_id, source, file_name, records_total, records_new, records_updated, records_failed)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (batch_id, 'shopify', 'uploaded_file', len(orders_data), records_new, records_updated, records_failed))
+                if existing:
+                    # Update existing
+                    cursor.execute("""
+                        UPDATE raw_shopify_orders SET
+                            shopify_id = ?, email = ?, phone = ?, billing_phone = ?,
+                            billing_name = ?, shipping_name = ?, shipping_city = ?,
+                            shipping_state = ?, shipping_pincode = ?, subtotal = ?,
+                            total = ?, discount_code = ?, discount_amount = ?,
+                            refunded_amount = ?, financial_status = ?, fulfillment_status = ?,
+                            payment_method_raw = ?, payment_method = ?, lineitem_names = ?,
+                            total_quantity = ?, order_date = ?, cancelled_at = ?,
+                            source = ?, tags = ?, uploaded_at = CURRENT_TIMESTAMP,
+                            import_batch_id = ?
+                        WHERE order_id = ?
+                    """, (
+                        order['shopify_id'], order['email'], order['phone'], order['billing_phone'],
+                        order['billing_name'], order['shipping_name'], order['shipping_city'],
+                        order['shipping_state'], order['shipping_pincode'], order['subtotal'],
+                        order['total'], order['discount_code'], order['discount_amount'],
+                        order['refunded_amount'], order['financial_status'], order['fulfillment_status'],
+                        order['payment_method_raw'], order['payment_method'], order['lineitem_names'],
+                        order['total_quantity'], order['order_date'], order['cancelled_at'],
+                        order['source'], order['tags'], batch_id, order_id
+                    ))
+                    records_updated += 1
+                else:
+                    # Insert new
+                    cursor.execute("""
+                        INSERT INTO raw_shopify_orders (
+                            order_id, shopify_id, email, phone, billing_phone,
+                            billing_name, shipping_name, shipping_city, shipping_state,
+                            shipping_pincode, subtotal, total, discount_code, discount_amount,
+                            refunded_amount, financial_status, fulfillment_status,
+                            payment_method_raw, payment_method, lineitem_names, total_quantity,
+                            order_date, cancelled_at, source, tags, import_batch_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        order['order_id'], order['shopify_id'], order['email'], order['phone'],
+                        order['billing_phone'], order['billing_name'], order['shipping_name'],
+                        order['shipping_city'], order['shipping_state'], order['shipping_pincode'],
+                        order['subtotal'], order['total'], order['discount_code'], order['discount_amount'],
+                        order['refunded_amount'], order['financial_status'], order['fulfillment_status'],
+                        order['payment_method_raw'], order['payment_method'], order['lineitem_names'],
+                        order['total_quantity'], order['order_date'], order['cancelled_at'],
+                        order['source'], order['tags'], batch_id
+                    ))
+                    records_new += 1
 
-    conn.commit()
-    conn.close()
+            except Exception as e:
+                records_failed += 1
+                logger.error(f"Error processing order {order_id}: {e}")
+
+        # Insert line items (clear existing first for this batch)
+        order_ids = list(orders_data.keys())
+        if order_ids:
+            placeholders = ','.join(['?' for _ in order_ids])
+            cursor.execute(f"DELETE FROM order_line_items WHERE order_id IN ({placeholders})", order_ids)
+
+            for item in line_items_data:
+                if item['order_id'] in orders_data:
+                    cursor.execute("""
+                        INSERT INTO order_line_items (
+                            order_id, lineitem_name, lineitem_sku,
+                            lineitem_quantity, lineitem_price, lineitem_discount
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        item['order_id'], item['lineitem_name'], item['lineitem_sku'],
+                        item['lineitem_quantity'], item['lineitem_price'], item['lineitem_discount']
+                    ))
+
+        # Log import
+        cursor.execute("""
+            INSERT INTO import_log (batch_id, source, file_name, records_total, records_new, records_updated, records_failed)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (batch_id, 'shopify', 'uploaded_file', len(orders_data), records_new, records_updated, records_failed))
+
+        conn.commit()
+        conn.close()
 
     return {
         'success': True,
@@ -531,11 +612,8 @@ def parse_prozo_csv(file_or_path) -> Dict[str, Any]:
             'records_failed': 0
         }
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    records_new = 0
-    records_updated = 0
+    # Prepare orders data
+    orders_data = []
     records_failed = 0
 
     for _, row in df.iterrows():
@@ -573,74 +651,111 @@ def parse_prozo_csv(file_or_path) -> Dict[str, Any]:
             'merchant_price': safe_float(row.get(col_map['merchant_price'])),
             'merchant_price_rto': safe_float(row.get(col_map['merchant_price_rto'])),
         }
+        orders_data.append(order_data)
 
+    records_new = 0
+    records_updated = 0
+
+    if USE_SUPABASE:
+        # =====================================================
+        # SUPABASE BACKEND
+        # =====================================================
         try:
-            # Check if AWB exists
-            cursor.execute("SELECT id FROM raw_prozo_orders WHERE awb = ?", (awb,))
-            existing = cursor.fetchone()
+            inserted_count = supabase_insert_prozo_orders(orders_data, batch_id)
+            records_new = inserted_count
+            logger.info(f"Supabase: Inserted {inserted_count} Prozo orders")
 
-            if existing:
-                # Update existing (status may have changed)
-                cursor.execute("""
-                    UPDATE raw_prozo_orders SET
-                        order_id = ?, status_raw = ?, status = ?,
-                        drop_name = ?, drop_phone = ?, drop_email = ?,
-                        drop_city = ?, drop_state = ?, drop_pincode = ?,
-                        courier_partner = ?, payment_mode = ?, order_created_at = ?,
-                        pickup_date = ?, delivery_date = ?, rto_delivery_date = ?,
-                        min_tat = ?, max_tat = ?, ndr_status = ?,
-                        total_attempts = ?, latest_remark = ?,
-                        merchant_price = ?, merchant_price_rto = ?,
-                        uploaded_at = CURRENT_TIMESTAMP, import_batch_id = ?
-                    WHERE awb = ?
-                """, (
-                    order_data['order_id'], order_data['status_raw'], order_data['status'],
-                    order_data['drop_name'], order_data['drop_phone'], order_data['drop_email'],
-                    order_data['drop_city'], order_data['drop_state'], order_data['drop_pincode'],
-                    order_data['courier_partner'], order_data['payment_mode'], order_data['order_created_at'],
-                    order_data['pickup_date'], order_data['delivery_date'], order_data['rto_delivery_date'],
-                    order_data['min_tat'], order_data['max_tat'], order_data['ndr_status'],
-                    order_data['total_attempts'], order_data['latest_remark'],
-                    order_data['merchant_price'], order_data['merchant_price_rto'],
-                    batch_id, awb
-                ))
-                records_updated += 1
-            else:
-                # Insert new
-                cursor.execute("""
-                    INSERT INTO raw_prozo_orders (
-                        awb, order_id, status_raw, status,
-                        drop_name, drop_phone, drop_email,
-                        drop_city, drop_state, drop_pincode,
-                        courier_partner, payment_mode, order_created_at,
-                        pickup_date, delivery_date, rto_delivery_date,
-                        min_tat, max_tat, ndr_status,
-                        total_attempts, latest_remark,
-                        merchant_price, merchant_price_rto, import_batch_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    order_data['awb'], order_data['order_id'], order_data['status_raw'], order_data['status'],
-                    order_data['drop_name'], order_data['drop_phone'], order_data['drop_email'],
-                    order_data['drop_city'], order_data['drop_state'], order_data['drop_pincode'],
-                    order_data['courier_partner'], order_data['payment_mode'], order_data['order_created_at'],
-                    order_data['pickup_date'], order_data['delivery_date'], order_data['rto_delivery_date'],
-                    order_data['min_tat'], order_data['max_tat'], order_data['ndr_status'],
-                    order_data['total_attempts'], order_data['latest_remark'],
-                    order_data['merchant_price'], order_data['merchant_price_rto'], batch_id
-                ))
-                records_new += 1
+            # Log import
+            supabase_log_import(
+                batch_id=batch_id,
+                source='prozo',
+                file_name='uploaded_file',
+                records_total=len(df),
+                records_new=records_new,
+                records_updated=records_updated,
+                records_failed=records_failed
+            )
 
         except Exception as e:
-            records_failed += 1
-            print(f"Error processing AWB {awb}: {e}")
+            logger.error(f"Supabase error: {e}")
+            records_failed = len(orders_data)
 
-    # Log import
-    cursor.execute("""
-        INSERT INTO import_log (batch_id, source, file_name, records_total, records_new, records_updated, records_failed)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (batch_id, 'prozo', 'uploaded_file', len(df), records_new, records_updated, records_failed))
+    else:
+        # =====================================================
+        # SQLITE BACKEND (fallback)
+        # =====================================================
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-    conn.commit()
+        for order_data in orders_data:
+            awb = order_data['awb']
+            try:
+                # Check if AWB exists
+                cursor.execute("SELECT id FROM raw_prozo_orders WHERE awb = ?", (awb,))
+                existing = cursor.fetchone()
+
+                if existing:
+                    # Update existing (status may have changed)
+                    cursor.execute("""
+                        UPDATE raw_prozo_orders SET
+                            order_id = ?, status_raw = ?, status = ?,
+                            drop_name = ?, drop_phone = ?, drop_email = ?,
+                            drop_city = ?, drop_state = ?, drop_pincode = ?,
+                            courier_partner = ?, payment_mode = ?, order_created_at = ?,
+                            pickup_date = ?, delivery_date = ?, rto_delivery_date = ?,
+                            min_tat = ?, max_tat = ?, ndr_status = ?,
+                            total_attempts = ?, latest_remark = ?,
+                            merchant_price = ?, merchant_price_rto = ?,
+                            uploaded_at = CURRENT_TIMESTAMP, import_batch_id = ?
+                        WHERE awb = ?
+                    """, (
+                        order_data['order_id'], order_data['status_raw'], order_data['status'],
+                        order_data['drop_name'], order_data['drop_phone'], order_data['drop_email'],
+                        order_data['drop_city'], order_data['drop_state'], order_data['drop_pincode'],
+                        order_data['courier_partner'], order_data['payment_mode'], order_data['order_created_at'],
+                        order_data['pickup_date'], order_data['delivery_date'], order_data['rto_delivery_date'],
+                        order_data['min_tat'], order_data['max_tat'], order_data['ndr_status'],
+                        order_data['total_attempts'], order_data['latest_remark'],
+                        order_data['merchant_price'], order_data['merchant_price_rto'],
+                        batch_id, awb
+                    ))
+                    records_updated += 1
+                else:
+                    # Insert new
+                    cursor.execute("""
+                        INSERT INTO raw_prozo_orders (
+                            awb, order_id, status_raw, status,
+                            drop_name, drop_phone, drop_email,
+                            drop_city, drop_state, drop_pincode,
+                            courier_partner, payment_mode, order_created_at,
+                            pickup_date, delivery_date, rto_delivery_date,
+                            min_tat, max_tat, ndr_status,
+                            total_attempts, latest_remark,
+                            merchant_price, merchant_price_rto, import_batch_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        order_data['awb'], order_data['order_id'], order_data['status_raw'], order_data['status'],
+                        order_data['drop_name'], order_data['drop_phone'], order_data['drop_email'],
+                        order_data['drop_city'], order_data['drop_state'], order_data['drop_pincode'],
+                        order_data['courier_partner'], order_data['payment_mode'], order_data['order_created_at'],
+                        order_data['pickup_date'], order_data['delivery_date'], order_data['rto_delivery_date'],
+                        order_data['min_tat'], order_data['max_tat'], order_data['ndr_status'],
+                        order_data['total_attempts'], order_data['latest_remark'],
+                        order_data['merchant_price'], order_data['merchant_price_rto'], batch_id
+                    ))
+                    records_new += 1
+
+            except Exception as e:
+                records_failed += 1
+                logger.error(f"Error processing AWB {awb}: {e}")
+
+        # Log import
+        cursor.execute("""
+            INSERT INTO import_log (batch_id, source, file_name, records_total, records_new, records_updated, records_failed)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (batch_id, 'prozo', 'uploaded_file', len(df), records_new, records_updated, records_failed))
+
+        conn.commit()
     conn.close()
 
     return {

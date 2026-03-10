@@ -39,6 +39,8 @@ shopify-dashboard/
 │   ├── logistics_db.py           # Database schema & CRUD operations
 │   ├── logistics_parsers.py      # CSV parsers for Shopify & Prozo
 │   ├── logistics_engine.py       # Matching engine & metrics calculation
+│   ├── prozo_automation.py       # Playwright browser automation for Prozo MIS
+│   ├── prozo_sync.py             # Prozo sync orchestration (download → parse → import)
 │   │
 │   │   # Live Learning
 │   ├── live_learning_module.py   # Live Learning UI (Dashboard, Upload, Events)
@@ -109,31 +111,123 @@ SUPABASE_URL = "https://your-project-id.supabase.co"
 SUPABASE_KEY = "your_service_role_key_here"
 ```
 
-### Data Persistence - Supabase (IMPLEMENTED)
+### Database Architecture (CRITICAL - ALL MODULES MUST FOLLOW)
 
-**Status**: ✅ IMPLEMENTED
+**THIS IS A HARD REQUIREMENT FOR ALL MODULES**
 
-The dashboard now uses **Supabase** as the primary database backend for FB Comment Bot data. This ensures data persists across Streamlit Cloud reboots.
+#### Core Principle: Supabase is the Source of Truth
 
-**How it works**:
-- `src/supabase_db.py` - All Supabase CRUD operations
-- `src/fb_comment_bot_module.py` - Automatically uses Supabase when configured
-- Falls back to SQLite if Supabase credentials are not available
+| Environment | Database Backend | When |
+|-------------|------------------|------|
+| **Streamlit Cloud** | **Supabase** (REQUIRED) | Production - all data must persist in cloud |
+| **Local Development** | SQLite | Testing only - data is ephemeral |
 
-**Supabase Project Details**:
+#### Supabase Project Details
 - **Project URL**: `https://ansuuhyoqddwtxqfoxsn.supabase.co`
 - **Storage**: 500MB free tier (~2 years of data at current usage)
 
-**Database Tables** (created in Supabase):
+#### How Backend Selection Works
+
+Every module that accesses data MUST:
+
+1. **Check if Supabase is available** at module load time
+2. **Use Supabase functions** when `USE_SUPABASE = True`
+3. **Fall back to SQLite** only when Supabase is unavailable (local dev)
+
+```python
+# CORRECT PATTERN - Every *_db.py and *_engine.py must follow this:
+
+import os
+
+# Detect environment
+IS_STREAMLIT_CLOUD = os.environ.get('STREAMLIT_CLOUD') or os.path.exists('/mount/src')
+
+# Try Supabase first
+USE_SUPABASE = False
+try:
+    from supabase_db import get_supabase_client, SUPABASE_AVAILABLE
+    if SUPABASE_AVAILABLE:
+        USE_SUPABASE = True
+except ImportError:
+    pass
+
+def get_data():
+    if USE_SUPABASE:
+        return supabase_get_data()  # Use Supabase
+    else:
+        return sqlite_get_data()    # Fallback for local dev
+```
+
+#### Module Database Files
+
+| Module | Supabase Helper | SQLite Fallback | Status |
+|--------|----------------|-----------------|--------|
+| FB Comment Bot | `supabase_db.py` | `fb_comments.db` | ✅ Done |
+| FB Ads | `supabase_fb_ads_db.py` | `fb_ads.db` | ⚠️ Needs engine update |
+| Logistics | `supabase_logistics_db.py` | `logistics.db` | ⚠️ Needs engine update |
+| Live Learning | (needs creation) | `logistics.db` | ❌ Not implemented |
+| User Journey | (needs creation) | `journey.db` | ❌ Not implemented |
+
+#### Supabase Tables (Cloud Database)
+
+**FB Comment Bot:**
 - `fb_comments` - All FB/IG comments with classification
 - `fb_bot_config` - Runtime settings (shadow_mode, etc.)
 - `fb_commenter_history` - Repeat commenter tracking
 - `fb_bot_log` - Audit and cost tracking
 - `fb_posts_tracked` - Monitored posts/ads
 
-**UI Indicator**: The FB Comment Bot overview tab shows which database is active:
-- ☁️ Green: "Supabase (Cloud)" - Data persists
-- 💾 Yellow: "SQLite (Local)" - Data may be lost on reboot
+**Logistics:**
+- `raw_shopify_orders` - Shopify order data
+- `raw_prozo_orders` - Prozo shipment data
+- `unified_orders` - Matched orders with delivery status
+- `order_line_items` - Individual product line items
+
+**FB Ads:**
+- `fb_ads_daily` - Daily ad performance metrics
+- `fb_ads_campaigns` - Campaign metadata
+
+#### IMPORTANT: Engine Files Must Use Supabase
+
+The `*_engine.py` files (e.g., `logistics_engine.py`) contain the business logic for matching, metrics, and data processing. These files currently use SQLite directly via `get_db_connection()`.
+
+**REQUIRED FIX**: All engine files must be updated to:
+1. Import both Supabase and SQLite functions
+2. Check `USE_SUPABASE` flag before every database operation
+3. Call appropriate backend functions
+
+Example fix needed for `logistics_engine.py`:
+```python
+# WRONG (current):
+from logistics_db import get_db_connection
+conn = get_db_connection()  # Always SQLite!
+
+# CORRECT (required):
+from logistics_db import USE_SUPABASE
+if USE_SUPABASE:
+    from supabase_logistics_db import get_unified_orders, upsert_unified_orders
+    # Use Supabase functions
+else:
+    conn = get_db_connection()  # SQLite fallback
+```
+
+#### UI Indicator
+
+All modules should show which database is active:
+- ☁️ Green: "Supabase (Cloud)" - Data persists across reboots
+- 💾 Yellow: "SQLite (Local)" - Data may be lost on reboot (local dev only)
+
+#### SQLite Path Warning
+
+**NEVER use relative paths for SQLite databases.** Use absolute paths:
+```python
+# WRONG:
+DB_PATH = "data/logistics.db"  # Breaks depending on cwd
+
+# CORRECT:
+import os
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "logistics.db")
+```
 
 ---
 
@@ -343,21 +437,41 @@ def render_your_module():
 
 ### 3. Logistics Reconciliation Module
 
-**Files:** `logistics_module.py`, `logistics_db.py`, `logistics_parsers.py`, `logistics_engine.py`
+**Files:** `logistics_module.py`, `logistics_db.py`, `logistics_parsers.py`, `logistics_engine.py`, `supabase_logistics_db.py`, `prozo_automation.py`, `prozo_sync.py`
+
+**Database:** Uses Supabase (cloud) with SQLite fallback for local development.
 
 **Features:**
-- **Data Sources**: Shopify Orders CSV + Prozo MIS CSV
+- **Data Sources**: Shopify Orders (API sync) + Prozo MIS (browser automation sync)
 - **Matching**: Shopify.Name ↔ Prozo.channelOrderName
 - **Payment Breakdown**: Full Prepaid / Partial Prepaid / COD
 - **Delivery Status**: Delivered / In Transit / RTO / Cancelled / Not Shipped
 - **Revenue Metrics**: Projected, Actual, Lost, Pending + AOV
 - **Dispatch Time**: <24h (fast) / 24-48h (normal) / >48h (delayed)
-- **Date Filters**: Yesterday (default), Last 7/14 days, Last Month, This Month, Custom
+- **Date Filters**: Today, Yesterday (default), This Month, Last Month, Custom (all calendar-based)
+
+**Data Sync:**
+- **Shopify**: API-based sync (automatic, uses Admin API)
+- **Prozo**: Browser automation sync using Playwright
+  - Logs into https://www.proship.in/
+  - Downloads MIS CSV report for selected date range
+  - Auto-imports and matches with Shopify orders
+  - Requires: `PROZO_EMAIL` and `PROZO_PASSWORD` in .env
+  - Requires: `pip install playwright && playwright install chromium`
 
 **UI Tabs:**
-- Dashboard: Metrics overview, payment/delivery breakdown
+- Dashboard: Metrics overview, payment/delivery breakdown, sync controls
 - User Journey: Per-order timeline
 - Line Items: Individual product details
+
+**Prozo Sync Setup:**
+1. Add to `.env`:
+   ```
+   PROZO_EMAIL=your_prozo_email@example.com
+   PROZO_PASSWORD=your_prozo_password
+   ```
+2. Install Playwright: `pip install playwright && playwright install chromium`
+3. Use "Sync from Prozo" section in Dashboard tab
 
 ### 4. User Journey Module
 
@@ -470,6 +584,10 @@ FB_COMMENTS_DB_PATH=data/fb_comments.db
 
 # Claude API (for comment classification)
 ANTHROPIC_API_KEY=sk-ant-api03-...
+
+# Prozo/Proship MIS Sync (browser automation)
+PROZO_EMAIL=your_prozo_login_email
+PROZO_PASSWORD=your_prozo_password
 ```
 
 ### Facebook Token Setup
@@ -555,14 +673,17 @@ The app will be available at `http://localhost:8503`
 - `commenter_fb_id` - Facebook/Instagram ID of commenter
 - `ad_name` - Name of the ad this comment is on
 
-### Other Databases
+### SQLite Databases (Local Development Only)
 
-| Database | Purpose |
-|----------|---------|
-| `fb_ads.db` | Daily ad performance metrics |
-| `orders.db` | Shopify order data |
-| `journey.db` | User journey tracking |
-| `logistics.db` | Logistics reconciliation |
+**Note**: These SQLite files are for LOCAL DEVELOPMENT only. In production (Streamlit Cloud), all data MUST come from Supabase.
+
+| SQLite File | Purpose | Supabase Equivalent |
+|-------------|---------|---------------------|
+| `fb_comments.db` | Comment bot data | ✅ Supabase tables |
+| `fb_ads.db` | Daily ad performance metrics | ⚠️ Needs migration |
+| `orders.db` | Shopify order data | (via logistics) |
+| `journey.db` | User journey tracking | ❌ Needs creation |
+| `logistics.db` | Logistics reconciliation | ✅ Supabase tables (but engine uses SQLite!) |
 
 ---
 
@@ -612,7 +733,19 @@ The app will be available at `http://localhost:8503`
 
 ### Data lost after Streamlit Cloud reboot
 - SQLite uses ephemeral storage on Streamlit Cloud
-- **Solution**: Migrate to Supabase or Snowflake (see Deployment section)
+- **Solution**: Ensure module uses Supabase backend (see Database Architecture section)
+
+### Zero orders / Missing data in Logistics or other modules
+- **Likely cause**: Module is using SQLite instead of Supabase
+- Check if `USE_SUPABASE = True` is being set
+- Check if engine files (`*_engine.py`) are calling Supabase functions
+- Verify no duplicate SQLite files exist (e.g., `src/data/` vs `data/`)
+- **Debug**: Add logging to confirm which backend is active
+
+### Wrong database being used (relative path issue)
+- SQLite paths like `data/logistics.db` resolve based on current working directory
+- Running from `src/` creates `src/data/logistics.db` (different file!)
+- **Solution**: Use absolute paths or ensure Supabase is primary backend
 
 ---
 
@@ -656,22 +789,46 @@ Ad Account
 
 ## Next Steps (TODO)
 
-### 1. Cloud Storage Migration - COMPLETED ✅
-~~Migrate from SQLite to Supabase for persistent data:~~
-- [x] Create Supabase project (free tier)
-- [x] Create tables matching current SQLite schema
-- [x] Update database functions to use Supabase client (supabase_db.py)
-- [x] Add `SUPABASE_URL` and `SUPABASE_KEY` to secrets
-- [x] Test data persistence across app reboots
+### 1. Supabase Migration - ALL MODULES (IN PROGRESS)
+
+**FB Comment Bot**: ✅ Complete
+- [x] Create Supabase tables
+- [x] Create `supabase_db.py` helper
+- [x] Update module to use Supabase when available
+
+**Logistics Module**: ✅ Complete
+- [x] Create Supabase tables
+- [x] Create `supabase_logistics_db.py` helper
+- [x] Update `logistics_engine.py` to use Supabase backend
+- [x] Update `logistics_parsers.py` to use Supabase backend
+- [x] Update `logistics_db.py` to use absolute paths
+- [x] Migrate existing SQLite data to Supabase (9,534 orders)
+- [x] Test matching engine with Supabase backend
+
+**FB Ads Module**: ⚠️ Partial - NEEDS COMPLETION
+- [x] Create `supabase_fb_ads_db.py` helper
+- [ ] Update `fb_ads_module.py` to use Supabase backend
+- [ ] Migrate ad scaling logic to use Supabase
+
+**Live Learning Module**: ❌ NOT STARTED
+- [ ] Create Supabase tables for live events
+- [ ] Create `supabase_live_learning_db.py` helper
+- [ ] Update `live_learning_db.py` to support dual backends
+- [ ] Update module to use Supabase when available
+
+**User Journey Module**: ❌ NOT STARTED
+- [ ] Create Supabase tables for journey data
+- [ ] Create `supabase_journey_db.py` helper
+- [ ] Update module to use Supabase when available
 
 ### 2. Authentication
 - [x] Enable Streamlit Cloud viewer authentication
 - [ ] Add email allowlist in Streamlit Cloud settings
 
-### 3. Deploy Supabase Changes to Streamlit Cloud
-- [ ] Add Supabase secrets to Streamlit Cloud (Settings → Secrets)
-- [ ] Redeploy app to use new Supabase backend
-- [ ] Test comment fetching and storage in production
+### 3. Deploy & Test
+- [x] Add Supabase secrets to Streamlit Cloud
+- [x] Verify Logistics module uses Supabase in production
+- [x] Delete stale `src/data/` directory (duplicate SQLite files)
 
 ### 4. Future Enhancements
 - [ ] Auto-refresh comments every X minutes

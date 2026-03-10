@@ -231,9 +231,170 @@ def render_dashboard_tab():
     st.divider()
 
     # =========================================
+    # PROZO SYNC SECTION
+    # =========================================
+    st.subheader("📦 Sync from Prozo")
+
+    # Import sync functions and exceptions
+    try:
+        from prozo_sync import (
+            sync_prozo_orders,
+            get_last_prozo_sync_timestamp,
+            save_last_prozo_sync_timestamp,
+            test_prozo_connection,
+            check_prozo_availability,
+            get_error_message,
+            ProzoAutomationError,
+            ProzoLoginError,
+            ProzoEmptyReportError,
+        )
+        # run_matching is already imported at module level
+        prozo_sync_available = True
+    except Exception as e:
+        prozo_sync_available = False
+        st.warning(f"⚠️ Prozo sync not configured: {e}")
+
+    if prozo_sync_available:
+        # Check availability (credentials + playwright)
+        availability = check_prozo_availability()
+
+        if not availability['available']:
+            st.warning(f"⚠️ {availability['message']}")
+            st.caption("Configure PROZO_EMAIL and PROZO_PASSWORD in .env, then run: pip install playwright && playwright install chromium")
+        else:
+            # Show last sync timestamp
+            last_sync = get_last_prozo_sync_timestamp()
+            if last_sync:
+                st.caption(f"Last synced: {last_sync.strftime('%d %b %Y, %I:%M %p')}")
+            else:
+                st.caption("Never synced")
+
+            col_psync1, col_psync2 = st.columns([1, 1])
+
+            with col_psync1:
+                # Full Sync button (Oct 1, 2025 to today)
+                if st.button("📦 Full Sync (Oct 1 - Today)", type="primary", use_container_width=True, key="prozo_quick_sync"):
+                    st.session_state['run_prozo_quick_sync'] = True
+
+            with col_psync2:
+                # Test connection
+                if st.button("🔌 Test Connection", use_container_width=True, key="prozo_test_conn"):
+                    with st.spinner("Testing Prozo connection..."):
+                        result = test_prozo_connection()
+                        if result['success']:
+                            st.success(f"✅ Prozo configured: {result.get('email', 'Unknown')}")
+                        else:
+                            st.error(f"❌ {result['message']}")
+
+            # Handle quick sync outside of button to avoid nesting issues
+            if st.session_state.get('run_prozo_quick_sync'):
+                st.session_state['run_prozo_quick_sync'] = False
+                with st.status("Syncing Prozo MIS...", expanded=True) as status:
+                    try:
+                        # Always sync from Oct 1, 2025 to today (full history)
+                        end_date = datetime.now().strftime('%Y-%m-%d')
+                        start_date = "2025-10-01"
+
+                        def progress_cb(msg, pct):
+                            status.update(label=msg)
+
+                        new_count, updated_count, failed_count = sync_prozo_orders(
+                            start_date, end_date, progress_cb, headless=True
+                        )
+                        save_last_prozo_sync_timestamp()
+
+                        # Auto-run matching
+                        match_result = run_matching()
+
+                        status.update(label=f"✅ Done: {new_count} new, {updated_count} updated, {match_result['matched']} matched", state="complete")
+
+                    except ProzoLoginError as e:
+                        status.update(label=f"❌ Login Failed", state="error")
+                        st.error(f"**Login Error:** {str(e)}")
+                        st.info("Check your PROZO_EMAIL and PROZO_PASSWORD in .env file")
+
+                    except ProzoEmptyReportError as e:
+                        status.update(label=f"❌ No Data", state="error")
+                        st.warning(f"**No Data Found:** {str(e)}")
+                        st.info("The report generated but contained no data for the selected date range")
+
+                    except ProzoAutomationError as e:
+                        status.update(label=f"❌ Sync Failed", state="error")
+                        st.error(f"**Prozo Sync Error:** {get_error_message(e)}")
+                        st.info("The Prozo dashboard may be down or the page structure may have changed. Try again later or use manual upload.")
+
+                    except Exception as e:
+                        status.update(label=f"❌ Unexpected Error", state="error")
+                        st.error(f"**Unexpected Error:** {str(e)}")
+
+            # Custom date range (expandable)
+            with st.expander("📅 Custom Date Range"):
+                col_pd1, col_pd2 = st.columns([1, 1])
+                with col_pd1:
+                    # Default to Oct 1, 2025 (when Prozo started)
+                    prozo_sync_start = st.date_input(
+                        "Start Date",
+                        value=datetime(2025, 10, 1),
+                        key="prozo_sync_start"
+                    )
+                with col_pd2:
+                    prozo_sync_end = st.date_input(
+                        "End Date",
+                        value=datetime.now(),
+                        key="prozo_sync_end"
+                    )
+
+                if st.button("📦 Sync Custom Range", key="prozo_custom_sync", use_container_width=True):
+                    st.session_state['run_prozo_custom_sync'] = True
+                    st.session_state['prozo_custom_start'] = prozo_sync_start.strftime('%Y-%m-%d')
+                    st.session_state['prozo_custom_end'] = prozo_sync_end.strftime('%Y-%m-%d')
+
+            # Handle custom sync outside expander
+            if st.session_state.get('run_prozo_custom_sync'):
+                st.session_state['run_prozo_custom_sync'] = False
+                custom_start = st.session_state.get('prozo_custom_start')
+                custom_end = st.session_state.get('prozo_custom_end')
+
+                with st.status(f"Syncing Prozo {custom_start} to {custom_end}...", expanded=True) as status:
+                    try:
+                        def progress_cb(msg, pct):
+                            status.update(label=msg)
+
+                        new_count, updated_count, failed_count = sync_prozo_orders(
+                            custom_start, custom_end, progress_cb, headless=True
+                        )
+                        save_last_prozo_sync_timestamp()
+
+                        # Auto-run matching
+                        match_result = run_matching()
+
+                        status.update(label=f"✅ Done: {new_count} new, {updated_count} updated, {match_result['matched']} matched", state="complete")
+
+                    except ProzoLoginError as e:
+                        status.update(label=f"❌ Login Failed", state="error")
+                        st.error(f"**Login Error:** {str(e)}")
+                        st.info("Check your PROZO_EMAIL and PROZO_PASSWORD in .env file")
+
+                    except ProzoEmptyReportError as e:
+                        status.update(label=f"❌ No Data", state="error")
+                        st.warning(f"**No Data Found:** {str(e)}")
+                        st.info("The report generated but contained no data for the selected date range")
+
+                    except ProzoAutomationError as e:
+                        status.update(label=f"❌ Sync Failed", state="error")
+                        st.error(f"**Prozo Sync Error:** {get_error_message(e)}")
+                        st.info("The Prozo dashboard may be down or the page structure may have changed. Try again later or use manual upload.")
+
+                    except Exception as e:
+                        status.update(label=f"❌ Unexpected Error", state="error")
+                        st.error(f"**Unexpected Error:** {str(e)}")
+
+    st.divider()
+
+    # =========================================
     # MANUAL UPLOAD SECTION
     # =========================================
-    st.subheader("📤 Manual Upload")
+    st.subheader("📤 Manual Upload (Fallback)")
 
     col1, col2, col3 = st.columns([1, 1, 1])
 
@@ -297,13 +458,17 @@ def render_dashboard_tab():
     today = datetime.now().date()
     yesterday = today - timedelta(days=1)
 
-    # Date presets
+    # Calculate calendar-based Last Month (1st to last day of previous month)
+    first_of_this_month = today.replace(day=1)
+    last_day_of_last_month = first_of_this_month - timedelta(days=1)
+    first_of_last_month = last_day_of_last_month.replace(day=1)
+
+    # Date presets (calendar-based, not rolling)
     date_presets = {
+        'Today': (today, today),
         'Yesterday': (yesterday, yesterday),
-        'Last 7 Days': (today - timedelta(days=7), yesterday),
-        'Last 14 Days': (today - timedelta(days=14), yesterday),
-        'Last Month': (today - timedelta(days=30), yesterday),
-        'This Month': (today.replace(day=1), yesterday),
+        'This Month': (first_of_this_month, today),
+        'Last Month': (first_of_last_month, last_day_of_last_month),
         'Custom': None
     }
 
