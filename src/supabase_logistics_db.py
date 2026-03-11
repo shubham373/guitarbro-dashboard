@@ -172,23 +172,41 @@ def clear_line_items() -> bool:
 # =============================================================================
 
 def insert_prozo_orders(orders: List[Dict[str, Any]], batch_id: str) -> int:
-    """Insert/upsert multiple Prozo orders. Uses AWB as unique key."""
+    """Insert/upsert multiple Prozo orders. Uses AWB as unique key.
+
+    Since Supabase table lacks unique constraint on AWB, we delete existing
+    records with matching AWBs before inserting new ones.
+    """
     client = get_supabase_client()
     if not client or not orders:
         return 0
 
     try:
+        # Extract all AWBs from the new orders
+        awbs = [order.get('awb') for order in orders if order.get('awb')]
+
+        # Delete existing records with these AWBs (in batches to avoid query limits)
+        batch_size = 100
+        for i in range(0, len(awbs), batch_size):
+            batch_awbs = awbs[i:i + batch_size]
+            client.table('raw_prozo_orders').delete().in_('awb', batch_awbs).execute()
+
+        logger.info(f"Deleted existing records for {len(awbs)} AWBs")
+
+        # Add batch_id to each order
         for order in orders:
             order['import_batch_id'] = batch_id
 
-        # Use upsert with AWB as conflict key to avoid duplicates
-        client.table('raw_prozo_orders').upsert(
-            orders, on_conflict='awb'
-        ).execute()
-        logger.info(f"Upserted {len(orders)} Prozo orders")
+        # Insert new records (in batches to avoid payload limits)
+        insert_batch_size = 500
+        for i in range(0, len(orders), insert_batch_size):
+            batch = orders[i:i + insert_batch_size]
+            client.table('raw_prozo_orders').insert(batch).execute()
+
+        logger.info(f"Inserted {len(orders)} Prozo orders")
         return len(orders)
     except Exception as e:
-        logger.error(f"Error upserting Prozo orders: {e}")
+        logger.error(f"Error inserting Prozo orders: {e}")
         return 0
 
 
